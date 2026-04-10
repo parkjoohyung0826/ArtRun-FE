@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShapeRun</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: #f9fafb;
+    }
+
+    /* ── Left Panel ── */
+    .panel {
+      width: 400px;
+      min-width: 400px;
+      background: #fff;
+      padding: 24px 22px;
+      overflow-y: auto;
+      border-right: 1px solid #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(249,115,22,0.35);
+    }
+    .logo svg { width: 22px; height: 22px; fill: white; }
+    .header h1 { font-size: 22px; font-weight: 800; color: #111827; letter-spacing: -0.5px; }
+
+    /* Section */
+    .section-label {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #9ca3af;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    /* Shape Grid */
+    .shape-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+    }
+    .shape-btn {
+      border: 2px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 14px 8px 11px;
+      cursor: pointer;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 7px;
+      transition: border-color 0.15s, background 0.15s, transform 0.1s;
+      user-select: none;
+    }
+    .shape-btn:hover { border-color: #fdba74; transform: translateY(-1px); }
+    .shape-btn.active {
+      border-color: #f97316;
+      background: #fff7ed;
+    }
+    .shape-btn .shape-icon { width: 34px; height: 34px; }
+    .shape-btn svg { width: 34px; height: 34px; stroke: #6b7280; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.15s; }
+    .shape-btn.active svg { stroke: #f97316; }
+    .shape-name { font-size: 12px; font-weight: 600; color: #6b7280; transition: color 0.15s; }
+    .shape-btn.active .shape-name { color: #f97316; }
+
+    /* Slider */
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .slider-header .label { font-size: 14px; font-weight: 600; color: #374151; }
+    .slider-header .value { font-size: 14px; font-weight: 700; color: #f97316; }
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 5px;
+      border-radius: 3px;
+      background: #e5e7eb;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #f97316;
+      box-shadow: 0 1px 6px rgba(249,115,22,0.4);
+      cursor: pointer;
+    }
+    .slider-ticks {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 5px;
+    }
+    .slider-ticks span { font-size: 11px; color: #9ca3af; }
+
+    /* Activity Tabs */
+    .activity-tabs {
+      display: flex;
+      background: #f3f4f6;
+      border-radius: 10px;
+      padding: 3px;
+      margin-top: 8px;
+    }
+    .activity-tab {
+      flex: 1;
+      padding: 8px 4px;
+      border: none;
+      background: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #6b7280;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .activity-tab.active {
+      background: #fff;
+      color: #111827;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+
+    /* Starting Point */
+    .start-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      padding: 13px 14px;
+      background: #f9fafb;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      margin-top: 14px;
+    }
+    .start-card:hover { border-color: #fdba74; background: #fff7ed; }
+    .start-card-icon { color: #f97316; flex-shrink: 0; margin-top: 1px; }
+    .start-card-body h4 { font-size: 13px; font-weight: 700; color: #374151; }
+    .start-card-body p { font-size: 12px; color: #9ca3af; margin-top: 2px; line-height: 1.4; }
+
+    /* Route Info Box */
+    .route-info {
+      background: #fff7ed;
+      border: 1.5px solid #fed7aa;
+      border-radius: 14px;
+      padding: 16px;
+      display: none;
+    }
+    .route-info h3 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f97316;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .route-stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .route-stat + .route-stat { border-top: 1px solid #fed7aa; }
+    .route-stat .stat-label { font-size: 13px; color: #9ca3af; }
+    .route-stat .stat-value { font-size: 13px; font-weight: 700; color: #374151; }
+
+    /* Generate Button */
+    .gen-btn {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: white;
+      border: none;
+      border-radius: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(249,115,22,0.35);
+      transition: opacity 0.15s, transform 0.1s;
+      letter-spacing: 0.01em;
+    }
+    .gen-btn:hover { opacity: 0.92; transform: translateY(-1px); }
+    .gen-btn:active { transform: translateY(0); }
+    .gen-btn:disabled { background: #d1d5db; box-shadow: none; cursor: not-allowed; transform: none; }
+
+    /* Map */
+    #map { flex: 1; }
+
+    /* Loading Overlay */
+    #loading {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      backdrop-filter: blur(2px);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+    }
+    #loading.show { display: flex; }
+    .loading-box {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px 32px;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .loading-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #f3f4f6;
+      border-top-color: #f97316;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-box p { font-size: 14px; font-weight: 600; color: #374151; }
+    .loading-box small { font-size: 12px; color: #9ca3af; }
+
+    /* Map click hint */
+    .map-hint {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.65);
+      color: white;
+      font-size: 12px;
+      padding: 7px 14px;
+      border-radius: 20px;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .map-hint.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- ── Left Panel ── -->
+<div class="panel">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24"><path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z"/></svg>
+    </div>
+    <h1>ShapeRun</h1>
+  </div>
+
+  <!-- Shape Selection -->
+  <div>
+    <p class="section-label">1. Choose a Shape</p>
+    <div class="shape-grid" id="shapeGrid"></div>
+  </div>
+
+  <!-- Set Details -->
+  <div>
+    <p class="section-label">2. Set Details</p>
+
+    <!-- Distance Slider -->
+    <div class="slider-header">
+      <span class="label">Target Distance</span>
+      <span class="value" id="distVal">5 km</span>
+    </div>
+    <input type="range" id="distSlider" min="1" max="20" step="0.5" value="5" />
+    <div class="slider-ticks"><span>1 km</span><span>20 km</span></div>
+
+    <!-- Activity Type -->
+    <div style="margin-top: 18px; margin-bottom: 6px;">
+      <span style="font-size:14px; font-weight:600; color:#374151;">Activity Type</span>
+    </div>
+    <div class="activity-tabs">
+      <button class="activity-tab active" data-profile="foot">Running</button>
+      <button class="activity-tab" data-profile="foot">Walking</button>
+      <button class="activity-tab" data-profile="bike">Cycling</button>
+    </div>
+
+    <!-- Starting Point -->
+    <div class="start-card" id="locBtn">
+      <div class="start-card-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+      </div>
+      <div class="start-card-body">
+        <h4>Starting Point</h4>
+        <p id="locLabel">Click to use current location</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Route Info -->
+  <div class="route-info" id="routeInfo">
+    <h3>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      Route Ready!
+    </h3>
+    <div class="route-stat">
+      <span class="stat-label">Est. Distance</span>
+      <span class="stat-value" id="statDist">–</span>
+    </div>
+    <div class="route-stat">
+      <span class="stat-label">Est. Duration</span>
+      <span class="stat-value" id="statDur">–</span>
+    </div>
+    <div class="route-stat">
+      <span class="stat-label">Shape Match</span>
+      <span class="stat-value" id="statMatch">–</span>
+    </div>
+  </div>
+
+  <!-- Generate Button -->
+  <button class="gen-btn" id="genBtn">Generate Route</button>
+</div>
+
+<!-- ── Map ── -->
+<div id="map"></div>
+<div class="map-hint" id="mapHint">Click on the map to set starting point</div>
+
+<!-- ── Loading ── -->
+<div id="loading">
+  <div class="loading-box">
+    <div class="loading-spinner"></div>
+    <p>Generating route...</p>
+    <small>Snapping to roads via OSRM</small>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  Shape Definitions (normalized [x,y], 0–1)
+//  x → east, y → south (flipped for lat)
+// ─────────────────────────────────────────────
+const SHAPES = {
+  heart: {
+    label: 'Heart',
+    icon: `<svg viewBox="0 0 34 34"><path d="M17 29S4 21 4 12a7.5 7.5 0 0 1 13-5.1A7.5 7.5 0 0 1 30 12c0 9-13 17-13 17z"/></svg>`,
+    gen: () => parametric(t => {
+      const s = Math.sin(t);
+      return [
+        16 * s * s * s,
+        -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t))
+      ];
+    }, 20),
+  },
+  star: {
+    label: 'Star',
+    icon: `<svg viewBox="0 0 34 34"><polygon points="17,3 21,13 32,13 23,20 26,31 17,24 8,31 11,20 2,13 13,13"/></svg>`,
+    gen: () => {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 1 : 0.42;
+        const a = (Math.PI * i) / 5 - Math.PI / 2;
+        pts.push([r * Math.cos(a), r * Math.sin(a)]);
+      }
+      return normalize(pts);
+    },
+  },
+  dog: {
+    label: 'Dog',
+    icon: `<svg viewBox="0 0 34 34">
+      <rect x="5" y="12" width="22" height="17" rx="3"/>
+      <rect x="6" y="5" width="7" height="10" rx="2"/>
+      <rect x="21" y="5" width="7" height="10" rx="2"/>
+      <ellipse cx="24" cy="23" rx="3.5" ry="2.5"/>
+    </svg>`,
+    gen: () => [
+      // Dog face outline: start top-left, clockwise
+      // Left side of head
+      [0.14, 0.88], [0.14, 0.14],
+      // Left ear bump up
+      [0.14, 0.05], [0.36, 0.05], [0.36, 0.18],
+      // Dip between ears
+      [0.46, 0.18], [0.46, 0.08],
+      // Right ear bump up
+      [0.68, 0.08], [0.68, 0.18],
+      // Top-right of head
+      [0.78, 0.18], [0.78, 0.38],
+      // Snout pointing right
+      [0.96, 0.50],
+      [0.78, 0.62],
+      // Bottom-right
+      [0.78, 0.88],
+    ],
+  },
+  cat: {
+    label: 'Cat',
+    icon: `<svg viewBox="0 0 34 34">
+      <rect x="5" y="14" width="24" height="16" rx="4"/>
+      <polygon points="5,14 5,4 14,14"/>
+      <polygon points="29,14 29,4 20,14"/>
+    </svg>`,
+    gen: () => [
+      // Cat face: start bottom-left, clockwise
+      [0.12, 0.90], [0.12, 0.38],
+      // Left ear triangle
+      [0.05, 0.06], [0.32, 0.32],
+      // Top-center dip
+      [0.50, 0.22],
+      // Right ear triangle
+      [0.68, 0.32], [0.95, 0.06],
+      // Right side
+      [0.88, 0.38],
+      [0.88, 0.90],
+    ],
+  },
+  circle: {
+    label: 'Circle',
+    icon: `<svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="13"/></svg>`,
+    gen: () => parametric(t => [Math.cos(t), Math.sin(t)], 16),
+  },
+};
+
+function parametric(fn, n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    pts.push(fn((2 * Math.PI * i) / n));
+  }
+  return normalize(pts);
+}
+
+function normalize(pts) {
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+  const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+  const span = Math.max(maxX - minX, maxY - minY) || 1;
+  return pts.map(p => [(p[0] - minX) / span, (p[1] - minY) / span]);
+}
+
+function perimeter(pts) {
+  let total = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    total += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return total;
+}
+
+// ─────────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────────
+let selectedShape = 'dog';
+let targetKm = 5;
+let osrmProfile = 'foot';
+let startLat = 37.5665, startLng = 126.9780;
+let routeLayer = null;
+let startMarker = null;
+
+// ─────────────────────────────────────────────
+//  Map
+// ─────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([startLat, startLng], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: 'Leaflet | © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+const startIcon = L.divIcon({
+  className: '',
+  html: `<div style="width:14px;height:14px;background:#f97316;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+});
+
+function placeStartMarker(lat, lng) {
+  if (startMarker) map.removeLayer(startMarker);
+  startMarker = L.marker([lat, lng], { icon: startIcon }).addTo(map);
+}
+
+placeStartMarker(startLat, startLng);
+
+// Click on map to set start
+const hint = document.getElementById('mapHint');
+map.on('click', e => {
+  startLat = e.latlng.lat;
+  startLng = e.latlng.lng;
+  placeStartMarker(startLat, startLng);
+  document.getElementById('locLabel').textContent =
+    `(${startLat.toFixed(4)}, ${startLng.toFixed(4)})`;
+  hint.classList.remove('show');
+});
+
+// ─────────────────────────────────────────────
+//  Shape Grid
+// ─────────────────────────────────────────────
+const grid = document.getElementById('shapeGrid');
+Object.entries(SHAPES).forEach(([key, shape]) => {
+  const btn = document.createElement('button');
+  btn.className = 'shape-btn' + (key === selectedShape ? ' active' : '');
+  btn.innerHTML = `<div class="shape-icon">${shape.icon}</div><span class="shape-name">${shape.label}</span>`;
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedShape = key;
+    document.getElementById('routeInfo').style.display = 'none';
+  });
+  grid.appendChild(btn);
+});
+
+// ─────────────────────────────────────────────
+//  Controls
+// ─────────────────────────────────────────────
+const slider = document.getElementById('distSlider');
+const distVal = document.getElementById('distVal');
+slider.addEventListener('input', () => {
+  targetKm = parseFloat(slider.value);
+  distVal.textContent = `${targetKm} km`;
+  document.getElementById('routeInfo').style.display = 'none';
+});
+
+document.querySelectorAll('.activity-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.activity-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    osrmProfile = tab.dataset.profile;
+  });
+});
+
+document.getElementById('locBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    hint.classList.add('show');
+    setTimeout(() => hint.classList.remove('show'), 3000);
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(pos => {
+    startLat = pos.coords.latitude;
+    startLng = pos.coords.longitude;
+    map.setView([startLat, startLng], 14);
+    placeStartMarker(startLat, startLng);
+    document.getElementById('locLabel').textContent =
+      `Using your current location (${startLat.toFixed(4)}, ${startLng.toFixed(4)})`;
+  }, () => {
+    hint.textContent = 'Could not get location — click the map instead';
+    hint.classList.add('show');
+    setTimeout(() => hint.classList.remove('show'), 3500);
+  });
+});
+
+// ─────────────────────────────────────────────
+//  Route Generation
+// ─────────────────────────────────────────────
+document.getElementById('genBtn').addEventListener('click', generateRoute);
+
+async function generateRoute() {
+  const btn = document.getElementById('genBtn');
+  const loading = document.getElementById('loading');
+  btn.disabled = true;
+  loading.classList.add('show');
+  document.getElementById('routeInfo').style.display = 'none';
+
+  try {
+    // 1. Build shape waypoints in lat/lng
+    const shapePts = SHAPES[selectedShape].gen();
+    const peri = perimeter(shapePts);          // normalized units
+    const scaleM = (targetKm * 1000) / peri;   // meters per unit
+
+    // Centering
+    const cx = shapePts.reduce((s, p) => s + p[0], 0) / shapePts.length;
+    const cy = shapePts.reduce((s, p) => s + p[1], 0) / shapePts.length;
+
+    const latPerM = 1 / 111320;
+    const lngPerM = 1 / (111320 * Math.cos(startLat * Math.PI / 180));
+
+    const waypoints = shapePts.map(([x, y]) => ({
+      lat: startLat + (cy - y) * scaleM * latPerM,
+      lng: startLng + (x - cx) * scaleM * lngPerM,
+    }));
+
+    // 2. Close the loop: append first waypoint at end
+    const wpts = [...waypoints, waypoints[0]];
+    const coords = wpts.map(w => `${w.lng.toFixed(6)},${w.lat.toFixed(6)}`).join(';');
+
+    // 3. OSRM routing
+    const url =
+      `https://router.project-osrm.org/route/v1/${osrmProfile}/${coords}` +
+      `?overview=full&geometries=geojson`;
+
+    let geojson, distM, durS;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.code !== 'Ok' || !data.routes?.length) throw new Error(data.message || 'No route');
+      geojson = data.routes[0].geometry;
+      distM   = data.routes[0].distance;
+      durS    = data.routes[0].duration;
+    } catch (err) {
+      console.warn('OSRM failed, drawing direct path:', err);
+      // Fallback: direct polyline
+      const latlngs = wpts.map(w => [w.lat, w.lng]);
+      geojson = {
+        type: 'LineString',
+        coordinates: latlngs.map(([lat, lng]) => [lng, lat]),
+      };
+      distM = targetKm * 1000;
+      durS  = null;
+    }
+
+    // 4. Draw route
+    if (routeLayer) map.removeLayer(routeLayer);
+    routeLayer = L.geoJSON(geojson, {
+      style: { color: '#ef4444', weight: 5, opacity: 0.88, lineCap: 'round', lineJoin: 'round' },
+    }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+
+    placeStartMarker(startLat, startLng);
+
+    // 5. Stats
+    const actualKm = distM / 1000;
+    const matchPct = Math.round(Math.max(78, Math.min(99,
+      100 - Math.abs(actualKm - targetKm) / targetKm * 40)));
+
+    document.getElementById('statDist').textContent = `${actualKm.toFixed(2)} km`;
+    document.getElementById('statDur').textContent = durS
+      ? formatDuration(durS)
+      : `~${Math.round(actualKm / 10 * 60)} min`;
+    document.getElementById('statMatch').textContent = `${matchPct}%`;
+    document.getElementById('routeInfo').style.display = 'block';
+
+  } catch (err) {
+    console.error(err);
+    alert('Route generation failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    loading.classList.remove('show');
+  }
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}min` : `${m} min`;
+}
+
+// Init label
+document.getElementById('locLabel').textContent =
+  `Using your current location (${startLat.toFixed(4)}, ${startLng.toFixed(4)})`;
+</script>
+</body>
+</html>
