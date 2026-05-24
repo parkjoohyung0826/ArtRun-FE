@@ -163,10 +163,39 @@ export const MAP_HTML = `<!DOCTYPE html>
       send({ type: 'ROUTE_DONE', distM: distM, durS: durS });
     }
 
+    // Draw a pre-computed route from the backend.
+    // msg: { type: 'DRAW_ROUTE', points: [{lat, lng}], startLat, startLng }
+    function drawRoute(msg) {
+      var points = msg.points || [];
+      if (!points.length) return;
+
+      var geojson = {
+        type: 'LineString',
+        coordinates: points.map(function(p) { return [p.lng, p.lat]; }),
+      };
+
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = L.geoJSON(geojson, {
+        style: {
+          color: '#ef4444',
+          weight: 5,
+          opacity: 0.9,
+          lineCap: 'round',
+          lineJoin: 'round',
+        },
+      }).addTo(map);
+
+      map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+
+      if (startMarker) map.removeLayer(startMarker);
+      startMarker = L.marker([msg.startLat, msg.startLng], { icon: startIcon }).addTo(map);
+    }
+
     function handleMessage(e) {
       try {
         var msg = JSON.parse(e.data);
         if (msg.type === 'GENERATE') generateRoute(msg);
+        else if (msg.type === 'DRAW_ROUTE') drawRoute(msg);
         else if (msg.type === 'SET_LOCATION') setLocation(msg.lat, msg.lng);
         else if (msg.type === 'CLEAR') clearRoute();
       } catch(err) {}
