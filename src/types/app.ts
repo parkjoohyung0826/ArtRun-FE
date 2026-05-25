@@ -23,4 +23,14 @@ export interface SavedRun {
   pace: string;
   matchPct: number;
   shared: boolean;
+  author?: string;
+  location?: string;
+  likes?: number;
+  saved?: boolean;
+  description?: string;
+  tags?: string[];
+  startCoord?: {
+    lat: number;
+    lng: number;
+  };
 }

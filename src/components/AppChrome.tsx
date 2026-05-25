@@ -1,8 +1,18 @@
 import React from 'react';
 import {Switch, Text, TouchableOpacity, View} from 'react-native';
+import {House, Map, Route, UserRound} from 'lucide-react-native';
 import {styles} from '../styles/appStyles';
-import {GREEN} from '../styles/theme';
+import {GREEN, TEXT_MUTED} from '../styles/theme';
 import type {RouteStats, SavedRun} from '../types/app';
+
+type FooterIconKey = 'home' | 'run' | 'community' | 'profile';
+
+const FOOTER_ICONS = {
+  home: House,
+  run: Route,
+  community: Map,
+  profile: UserRound,
+};
 
 export function ToggleRow({
   label,
@@ -76,16 +86,19 @@ export function FooterItem({
   onPress,
 }: {
   label: string;
-  icon: string;
+  icon: FooterIconKey;
   active: boolean;
   onPress: () => void;
 }) {
+  const Icon = FOOTER_ICONS[icon];
+  const color = active ? '#38bdf8' : TEXT_MUTED;
+
   return (
     <TouchableOpacity
       style={[styles.footerItem, active && styles.footerItemActive]}
       onPress={onPress}
       activeOpacity={0.75}>
-      <Text style={[styles.footerIcon, active && styles.footerActive]}>{icon}</Text>
+      <Icon size={22} color={color} strokeWidth={active ? 2.8 : 2.2} />
       <Text style={[styles.footerLabel, active && styles.footerActive]}>{label}</Text>
     </TouchableOpacity>
   );
