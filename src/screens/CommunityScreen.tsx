@@ -1,0 +1,365 @@
+import React from 'react';
+import {Image, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import {
+  Bookmark,
+  ChevronLeft,
+  Heart,
+  MapPin,
+  PlayCircle,
+  Search,
+  ShieldCheck,
+} from 'lucide-react-native';
+import {COMMUNITY_FILTERS, COMMUNITY_RUNS, ROUTE_IMAGES} from '../constants/appData';
+import {styles} from '../styles/appStyles';
+import type {CommunityFilter, Coordinate, SavedRun} from '../types/app';
+import {distanceBetweenCoords} from '../utils/geo';
+
+export function CommunityScreen({
+  savedRuns,
+  communityActions,
+  selectedCommunityId,
+  communityQuery,
+  communityFilter,
+  startCoord,
+  onSelectCommunityId,
+  onChangeQuery,
+  onChangeFilter,
+  onToggleAction,
+  onUseRoute,
+}: {
+  savedRuns: SavedRun[];
+  communityActions: Record<string, {liked: boolean; saved: boolean}>;
+  selectedCommunityId: string | null;
+  communityQuery: string;
+  communityFilter: CommunityFilter;
+  startCoord: Coordinate;
+  onSelectCommunityId: (id: string | null) => void;
+  onChangeQuery: (query: string) => void;
+  onChangeFilter: (filter: CommunityFilter) => void;
+  onToggleAction: (id: string, key: 'liked' | 'saved') => void;
+  onUseRoute: (run: SavedRun) => void;
+}) {
+  const runs = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
+  const routeImages = [
+    ROUTE_IMAGES.seoulForest,
+    ROUTE_IMAGES.hangang,
+    ROUTE_IMAGES.lake,
+    ROUTE_IMAGES.cityPark,
+  ];
+  const detailRun = selectedCommunityId
+    ? runs.find(run => run.id === selectedCommunityId)
+    : null;
+  const detailIndex = detailRun ? Math.max(0, runs.findIndex(run => run.id === detailRun.id)) : 0;
+  const normalizedQuery = communityQuery.trim().toLowerCase();
+  const filteredRuns = runs.filter(run => {
+    const actions = communityActions[run.id] || {
+      liked: false,
+      saved: Boolean(run.saved),
+    };
+    const routeStart = run.startCoord || startCoord;
+    const startDistance = distanceBetweenCoords(startCoord, routeStart);
+    const searchText = [run.shape, run.location, run.author, run.description, ...(run.tags || [])]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const matchesQuery = !normalizedQuery || searchText.includes(normalizedQuery);
+    const matchesFilter =
+      communityFilter === '전체' ||
+      (communityFilter === '인기' && (run.likes || 0) >= 1000) ||
+      (communityFilter === '저장' && actions.saved) ||
+      (communityFilter === '근처' && startDistance <= 1.2);
+
+    return matchesQuery && matchesFilter;
+  });
+
+  if (detailRun) {
+    const actions = communityActions[detailRun.id] || {
+      liked: false,
+      saved: Boolean(detailRun.saved),
+    };
+    const routeStart = detailRun.startCoord || startCoord;
+    const startDistance = distanceBetweenCoords(startCoord, routeStart);
+    const isNearStart = startDistance <= 1.2;
+    const likes = (detailRun.likes || 320) + (actions.liked ? 1 : 0);
+    const imageUri = routeImages[detailIndex % routeImages.length];
+
+    return (
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={styles.panelContent}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.communityDetailHeader}>
+          <TouchableOpacity
+            style={styles.communityBackButton}
+            onPress={() => onSelectCommunityId(null)}
+            activeOpacity={0.78}>
+            <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
+          </TouchableOpacity>
+          <View style={styles.communityDetailHeaderText}>
+            <Text style={styles.communityDetailKicker}>ROUTE DETAIL</Text>
+            <Text style={styles.communityDetailTitle}>{detailRun.shape} 루트</Text>
+          </View>
+        </View>
+
+        <View style={styles.communityDetailMapCard}>
+          <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
+          <View style={styles.previewScrim} />
+          <View style={styles.communityDetailMapTop}>
+            <View style={styles.communityLocationPill}>
+              <MapPin size={13} color="#fff" strokeWidth={2.5} />
+              <Text style={styles.communityLocationPillText}>
+                {detailRun.location || '내 공유 루트'}
+              </Text>
+            </View>
+            <View style={[styles.communityStartBadge, isNearStart && styles.communityStartBadgeOk]}>
+              <ShieldCheck
+                size={13}
+                color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
+                strokeWidth={2.6}
+              />
+              <Text
+                style={[
+                  styles.communityStartBadgeText,
+                  isNearStart && styles.communityStartBadgeTextOk,
+                ]}>
+                {isNearStart ? '현재 위치에서 시작 가능' : `시작점 ${startDistance.toFixed(1)}km`}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.communityDetailMapBottom}>
+            <Text style={styles.communityDetailMapTitle}>전체 루트 지도</Text>
+            <Text style={styles.communityDetailMapSub}>
+              시작점 기준으로 루트를 불러와 러닝 탭에서 실제 경로를 생성합니다.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.communityDetailSummary}>
+          <View style={styles.communityDetailMetric}>
+            <Text style={styles.communityDetailMetricLabel}>거리</Text>
+            <Text style={styles.communityDetailMetricValue}>{detailRun.distance}</Text>
+          </View>
+          <View style={styles.communityDetailMetric}>
+            <Text style={styles.communityDetailMetricLabel}>페이스</Text>
+            <Text style={styles.communityDetailMetricValue}>{detailRun.pace}</Text>
+          </View>
+          <View style={styles.communityDetailMetric}>
+            <Text style={styles.communityDetailMetricLabel}>일치율</Text>
+            <Text style={styles.communityDetailMetricValue}>{detailRun.matchPct}%</Text>
+          </View>
+        </View>
+
+        <View style={styles.communityDetailSection}>
+          <View style={styles.communityRouteTitleRow}>
+            <View style={styles.communityRouteTitleBox}>
+              <Text style={styles.communityDetailSectionTitle}>루트 설명</Text>
+              <Text style={styles.communityAuthorText}>
+                {detailRun.author || '내 기록'} · 좋아요{' '}
+                {likes >= 1000 ? `${(likes / 1000).toFixed(1)}k` : likes}
+              </Text>
+            </View>
+            <View style={styles.communityAuthorBadge}>
+              <Text style={styles.communityAuthorInitial}>
+                {(detailRun.author || '나').slice(0, 1)}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.communityDetailText}>
+            {detailRun.description ||
+              '내가 완주한 러닝 아트 루트입니다. 같은 조건으로 다시 생성해서 달릴 수 있습니다.'}
+          </Text>
+          <View style={styles.communityTags}>
+            {(detailRun.tags || ['내 기록', '공유됨']).map(tag => (
+              <View key={tag} style={styles.communityTag}>
+                <Text style={styles.communityTagText}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.communityDetailActions}>
+          <TouchableOpacity
+            style={styles.communityDetailIconAction}
+            onPress={() => onToggleAction(detailRun.id, 'liked')}
+            activeOpacity={0.75}>
+            <Heart
+              size={19}
+              color={actions.liked ? '#38bdf8' : '#94a3b8'}
+              fill={actions.liked ? '#38bdf8' : 'transparent'}
+              strokeWidth={2.4}
+            />
+            <Text style={styles.communityDetailIconActionText}>좋아요</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.communityDetailIconAction}
+            onPress={() => onToggleAction(detailRun.id, 'saved')}
+            activeOpacity={0.75}>
+            <Bookmark
+              size={19}
+              color={actions.saved ? '#38bdf8' : '#94a3b8'}
+              fill={actions.saved ? '#38bdf8' : 'transparent'}
+              strokeWidth={2.4}
+            />
+            <Text style={styles.communityDetailIconActionText}>저장</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.communityDetailRunAction}
+            onPress={() => onUseRoute(detailRun)}
+            activeOpacity={0.84}>
+            <PlayCircle size={18} color="#fff" strokeWidth={2.5} />
+            <Text style={styles.communityRunButtonText}>이 루트로 뛰기</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.panelScroll}
+      contentContainerStyle={styles.panelContent}
+      showsVerticalScrollIndicator={false}>
+      <View style={styles.communitySearchCard}>
+        <View style={styles.communitySearchBox}>
+          <Search size={18} color="#94a3b8" strokeWidth={2.5} />
+          <TextInput
+            value={communityQuery}
+            onChangeText={onChangeQuery}
+            placeholder="모양, 지역, 작성자 검색"
+            placeholderTextColor="#64748b"
+            style={styles.communitySearchInput}
+          />
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.communityFilterRow}>
+          {COMMUNITY_FILTERS.map(filter => {
+            const active = communityFilter === filter;
+            return (
+              <TouchableOpacity
+                key={filter}
+                style={[styles.communityFilterChip, active && styles.communityFilterChipActive]}
+                onPress={() => onChangeFilter(filter)}
+                activeOpacity={0.78}>
+                <Text
+                  style={[
+                    styles.communityFilterText,
+                    active && styles.communityFilterTextActive,
+                  ]}>
+                  {filter}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {filteredRuns.map((run, index) => {
+        const actions = communityActions[run.id] || {
+          liked: false,
+          saved: Boolean(run.saved),
+        };
+        const likes = (run.likes || 320) + (actions.liked ? 1 : 0);
+        const routeStart = run.startCoord || startCoord;
+        const startDistance = distanceBetweenCoords(startCoord, routeStart);
+        const isNearStart = startDistance <= 1.2;
+        const imageUri = routeImages[index % routeImages.length];
+
+        return (
+          <TouchableOpacity
+            key={run.id}
+            style={styles.communityRouteCard}
+            onPress={() => onSelectCommunityId(run.id)}
+            activeOpacity={0.86}>
+            <View style={styles.communityRouteImageBox}>
+              <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
+              <View style={styles.previewScrim} />
+              <View style={styles.communityImageTopRow}>
+                <View style={styles.communityLocationPill}>
+                  <MapPin size={13} color="#fff" strokeWidth={2.5} />
+                  <Text style={styles.communityLocationPillText}>
+                    {run.location || '내 공유 루트'}
+                  </Text>
+                </View>
+                <View style={[styles.communityStartBadge, isNearStart && styles.communityStartBadgeOk]}>
+                  <ShieldCheck
+                    size={13}
+                    color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
+                    strokeWidth={2.6}
+                  />
+                  <Text
+                    style={[
+                      styles.communityStartBadgeText,
+                      isNearStart && styles.communityStartBadgeTextOk,
+                    ]}>
+                    {isNearStart ? '시작 가능' : `${startDistance.toFixed(1)}km`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.communityRouteBody}>
+              <View style={styles.communityRouteTitleRow}>
+                <View style={styles.communityRouteTitleBox}>
+                  <Text style={styles.communityRouteTitle}>{run.shape} 루트</Text>
+                  <Text style={styles.communityRouteMeta}>
+                    {run.distance} · {run.pace} · 일치율 {run.matchPct}%
+                  </Text>
+                </View>
+                <View style={styles.communityAuthorBadge}>
+                  <Text style={styles.communityAuthorInitial}>
+                    {(run.author || '나').slice(0, 1)}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.communityAuthorText}>
+                {run.author || '내 기록'} · 좋아요{' '}
+                {likes >= 1000 ? `${(likes / 1000).toFixed(1)}k` : likes}
+              </Text>
+
+              <View style={styles.communityActionRow}>
+                <TouchableOpacity
+                  style={styles.communityIconButton}
+                  onPress={() => onToggleAction(run.id, 'liked')}
+                  activeOpacity={0.75}>
+                  <Heart
+                    size={18}
+                    color={actions.liked ? '#38bdf8' : '#94a3b8'}
+                    fill={actions.liked ? '#38bdf8' : 'transparent'}
+                    strokeWidth={2.4}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.communityIconButton}
+                  onPress={() => onToggleAction(run.id, 'saved')}
+                  activeOpacity={0.75}>
+                  <Bookmark
+                    size={18}
+                    color={actions.saved ? '#38bdf8' : '#94a3b8'}
+                    fill={actions.saved ? '#38bdf8' : 'transparent'}
+                    strokeWidth={2.4}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.communityRunButton}
+                  onPress={() => onUseRoute(run)}
+                  activeOpacity={0.84}>
+                  <PlayCircle size={17} color="#fff" strokeWidth={2.5} />
+                  <Text style={styles.communityRunButtonText}>이 루트로 뛰기</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+      {filteredRuns.length === 0 && (
+        <View style={styles.communityEmptyBox}>
+          <Text style={styles.communityEmptyTitle}>조건에 맞는 루트가 없습니다</Text>
+          <Text style={styles.communityEmptyText}>검색어나 필터를 바꿔 다시 찾아보세요.</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}

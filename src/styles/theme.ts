@@ -1,8 +1,9 @@
-export const GREEN = '#2f80ff';
-export const BLUE = '#38bdf8';
-export const SCREEN = '#151c2b';
-export const SURFACE = '#202b40';
-export const SURFACE_2 = '#26364f';
-export const LINE = '#334155';
-export const TEXT = '#f8fafc';
-export const TEXT_MUTED = '#94a3b8';
+export const GREEN = '#4B84F3';
+export const RUN_GREEN = '#10C97C';
+export const BLUE = '#5ECBFA';
+export const SCREEN = '#0E1928';
+export const SURFACE = '#162436';
+export const SURFACE_2 = '#1C2F47';
+export const LINE = '#1E3352';
+export const TEXT = '#EEF3FC';
+export const TEXT_MUTED = '#7A92B0';

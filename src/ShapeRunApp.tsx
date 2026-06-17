@@ -2,111 +2,62 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
+  Animated,
   PanResponder,
-  ScrollView,
   StatusBar,
   Text,
-  TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import Slider from '@react-native-community/slider';
 import Geolocation from '@react-native-community/geolocation';
 import {
-  Bookmark,
-  Cat,
-  Check,
-  ChevronLeft,
-  Circle,
-  Dog,
-  Heart,
-  LocateFixed,
   MapPinned,
-  MapPin,
-  Navigation,
-  Play,
-  PlayCircle,
-  Route as RouteIcon,
-  Search,
-  ShieldCheck,
-  Star,
 } from 'lucide-react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import WebView, {WebViewMessageEvent} from 'react-native-webview';
 import {MAP_HTML} from './mapHtml';
 import {SHAPES} from './shapes';
-import {FooterItem, RouteReadyCard, RunCard, ToggleRow} from './components/AppChrome';
+import {NAVER_MAP_WEB_BASE_URL} from './config';
+import {FooterItem} from './components/AppChrome';
 import {
   ACTIVITY_PROFILES,
-  COMMUNITY_RUNS,
   INITIAL_RUNS,
-  PRESET_SHAPES,
-  ROUTE_IMAGES,
 } from './constants/appData';
 import {styles} from './styles/appStyles';
-import {BLUE, GREEN} from './styles/theme';
-import type {Activity, Preferences, RoutePhase, RouteStats, SavedRun, TabKey} from './types/app';
+import {GREEN} from './styles/theme';
+import {AuthScreen} from './screens/AuthScreen';
+import {CommunityScreen} from './screens/CommunityScreen';
+import {HomeScreen} from './screens/HomeScreen';
+import {ProfileScreen} from './screens/ProfileScreen';
+import {RunModeScreen} from './screens/RunModeScreen';
+import {RunPlanScreen} from './screens/RunPlanScreen';
+import type {
+  Activity,
+  AuthMode,
+  CommunityFilter,
+  Preferences,
+  RoutePhase,
+  RouteStats,
+  SavedRun,
+  TabKey,
+} from './types/app';
+import {distanceBetweenCoords, parseDistanceKm, parsePaceMinutes} from './utils/geo';
+import {createNaverStaticRouteMapUrl} from './utils/naverStaticMap';
 import {formatDuration, inferPresetFromPrompt, shapeNameFromKey} from './utils/routeFormat';
 
-type ShapeIconKey = (typeof PRESET_SHAPES)[number]['icon'];
-
-const SHAPE_ICONS: Record<ShapeIconKey, React.ComponentType<any>> = {
-  star: Star,
-  heart: Heart,
-  circle: Circle,
-  dog: Dog,
-  cat: Cat,
-};
-
-const COMMUNITY_FILTERS = ['전체', '인기', '저장', '근처'] as const;
-type CommunityFilter = (typeof COMMUNITY_FILTERS)[number];
-
-function ShapePresetIcon({name, active}: {name: ShapeIconKey; active: boolean}) {
-  const Icon = SHAPE_ICONS[name];
-
-  return (
-    <Icon
-      size={24}
-      color={active ? '#2563eb' : '#38bdf8'}
-      strokeWidth={active ? 2.8 : 2.3}
-    />
-  );
-}
-
-function parseDistanceKm(value: string) {
-  const parsed = Number.parseFloat(value.replace(/[^\d.]/g, ''));
-  return Number.isFinite(parsed) ? parsed : 5;
-}
-
-function parsePaceMinutes(value: string) {
-  const match = value.match(/(\d+)'(\d+)/);
-  if (!match) return 5.5;
-
-  return Number(match[1]) + Number(match[2]) / 60;
-}
-
-function distanceBetweenCoords(
-  a: {lat: number; lng: number},
-  b: {lat: number; lng: number},
-) {
-  const toRad = (degree: number) => (degree * Math.PI) / 180;
-  const earthKm = 6371;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-
-  return 2 * earthKm * Math.asin(Math.sqrt(h));
-}
+const SHEET_EXPANDED_OFFSET = 0;
+const SHEET_COLLAPSED_VISIBLE_HEIGHT = 188;
+const FOOTER_BASE_HEIGHT = 66;
+type SheetSnap = 'expanded' | 'middle' | 'collapsed';
 
 export default function ShapeRunApp() {
   const insets = useSafeAreaInsets();
+  const {height: windowHeight} = useWindowDimensions();
   const webViewRef = useRef<WebView>(null);
   const runTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sheetOffset = useRef(new Animated.Value(520)).current;
+  const sheetOffsetPosition = useRef(520);
 
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [selectedShape, setSelectedShape] = useState('star');
@@ -131,19 +82,60 @@ export default function ShapeRunApp() {
   const [voiceCue, setVoiceCue] = useState('경로를 생성하면 러닝 코치가 준비됩니다.');
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>(INITIAL_RUNS);
   const [pendingQuickGenerate, setPendingQuickGenerate] = useState(false);
-  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [sheetSnap, setSheetSnap] = useState<SheetSnap>('collapsed');
+  const [shareCardSaved, setShareCardSaved] = useState(false);
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityFilter, setCommunityFilter] = useState<CommunityFilter>('전체');
   const [communityActions, setCommunityActions] = useState<
     Record<string, {liked: boolean; saved: boolean}>
   >({});
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authName, setAuthName] = useState('Art Runner');
+  const [authEmail, setAuthEmail] = useState('runner@artrun.app');
+  const [authPassword, setAuthPassword] = useState('');
+  const [selectedProfileRunId, setSelectedProfileRunId] = useState<string | null>(null);
+  const footerHeight = FOOTER_BASE_HEIGHT + Math.max(insets.bottom, 8);
+  const runStageHeight = Math.max(0, windowHeight - footerHeight);
+  const sheetHeight = Math.max(560, runStageHeight - 34);
+  const sheetCollapsedOffset = Math.max(0, sheetHeight - SHEET_COLLAPSED_VISIBLE_HEIGHT);
+  const sheetMiddleOffset = Math.round(sheetCollapsedOffset * 0.52);
+  const sheetCurrentOffset =
+    sheetSnap === 'expanded'
+      ? SHEET_EXPANDED_OFFSET
+      : sheetSnap === 'middle'
+        ? sheetMiddleOffset
+        : sheetCollapsedOffset;
+  const sheetScrollBottomInset = Math.max(40, sheetCurrentOffset + 56);
+  const sheetSnapPoints = useMemo(
+    () => [SHEET_EXPANDED_OFFSET, sheetMiddleOffset, sheetCollapsedOffset],
+    [sheetCollapsedOffset, sheetMiddleOffset],
+  );
+  const nearestSheetSnap = useCallback(
+    (value: number) =>
+      sheetSnapPoints.reduce((nearest, point) =>
+        Math.abs(point - value) < Math.abs(nearest - value) ? point : nearest,
+      ),
+    [sheetSnapPoints],
+  );
 
   useEffect(() => {
     return () => {
       if (runTimer.current) clearInterval(runTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    const target =
+      sheetSnap === 'expanded'
+        ? SHEET_EXPANDED_OFFSET
+        : sheetSnap === 'middle'
+          ? sheetMiddleOffset
+          : sheetCollapsedOffset;
+    sheetOffsetPosition.current = target;
+    sheetOffset.setValue(target);
+  }, [sheetCollapsedOffset, sheetMiddleOffset, sheetOffset, sheetSnap]);
 
   const finishRun = useCallback(() => {
     if (runTimer.current) clearInterval(runTimer.current);
@@ -213,22 +205,77 @@ export default function ShapeRunApp() {
     () => (distance * runProgress).toFixed(2),
     [distance, runProgress],
   );
+  const averagePaceLabel = useMemo(
+    () =>
+      `${Math.floor(targetPace)}'${Math.round((targetPace % 1) * 60)
+        .toString()
+        .padStart(2, '0')}"`,
+    [targetPace],
+  );
+  const elapsedTimeLabel = useMemo(
+    () => formatDuration(Math.round(distance * targetPace * 60), distance),
+    [distance, targetPace],
+  );
+  const shareMapImageUrl = useMemo(
+    () => createNaverStaticRouteMapUrl(routeStats?.routePoints || []),
+    [routeStats?.routePoints],
+  );
+
+  const animateSheetTo = useCallback(
+    (toValue: number) => {
+      sheetOffsetPosition.current = toValue;
+      setSheetSnap(
+        toValue === SHEET_EXPANDED_OFFSET
+          ? 'expanded'
+          : toValue === sheetCollapsedOffset
+            ? 'collapsed'
+            : 'middle',
+      );
+      Animated.spring(sheetOffset, {
+        toValue,
+        useNativeDriver: true,
+        tension: 90,
+        friction: 14,
+      }).start();
+    },
+    [sheetCollapsedOffset, sheetOffset],
+  );
 
   const sheetPanResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 6,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          sheetOffset.stopAnimation(value => {
+            sheetOffsetPosition.current = value;
+          });
+        },
+        onPanResponderMove: (_, gesture) => {
+          const next = Math.max(
+            SHEET_EXPANDED_OFFSET,
+            Math.min(sheetCollapsedOffset, sheetOffsetPosition.current + gesture.dy),
+          );
+          sheetOffset.setValue(next);
+        },
         onPanResponderRelease: (_, gesture) => {
-          if (gesture.dy < -24) {
-            setSheetExpanded(true);
-          }
-          if (gesture.dy > 24) {
-            setSheetExpanded(false);
-          }
+          const next = Math.max(
+            SHEET_EXPANDED_OFFSET,
+            Math.min(sheetCollapsedOffset, sheetOffsetPosition.current + gesture.dy),
+          );
+          const projected = Math.max(
+            SHEET_EXPANDED_OFFSET,
+            Math.min(sheetCollapsedOffset, next + gesture.vy * 120),
+          );
+          animateSheetTo(nearestSheetSnap(projected));
+        },
+        onPanResponderTerminate: () => {
+          sheetOffset.stopAnimation(value => {
+            animateSheetTo(nearestSheetSnap(value));
+          });
         },
       }),
-    [],
+    [animateSheetTo, nearestSheetSnap, sheetCollapsedOffset, sheetOffset],
   );
 
   const postToMap = useCallback((data: object) => {
@@ -261,6 +308,7 @@ export default function ShapeRunApp() {
             duration: formatDuration(msg.durS, distance),
             matchPct: Math.round(88 + Math.random() * 8),
             shapeLabel,
+            routePoints: Array.isArray(msg.routePoints) ? msg.routePoints : [],
           });
         }
       } catch {}
@@ -324,7 +372,9 @@ export default function ShapeRunApp() {
     if (!routeStats) return;
     setActiveTab('run');
     setRoutePhase('running');
+    setSheetSnap('expanded');
     setRunProgress(0);
+    setShareCardSaved(false);
     setCurrentPace(targetPace);
     setCurrentBpm(156);
     setVoiceCue(`${routeStats.shapeLabel} 러닝을 시작합니다. 첫 구간은 목표 페이스로 진입하세요.`);
@@ -334,7 +384,16 @@ export default function ShapeRunApp() {
     setRoutePhase('idle');
     setRouteStats(null);
     setRunProgress(0);
+    setShareCardSaved(false);
     setVoiceCue('새 러닝 루트를 생성할 준비가 되었습니다.');
+  }, []);
+
+  const handleSaveShareCard = useCallback(() => {
+    setShareCardSaved(true);
+    Alert.alert(
+      '공유 카드 저장',
+      'SNS 공유용 러닝 카드가 저장되었습니다. 실제 갤러리 저장은 네이티브 저장 권한 연동 단계에서 연결하면 됩니다.',
+    );
   }, []);
 
   const handleGetLocation = useCallback(() => {
@@ -415,874 +474,189 @@ export default function ShapeRunApp() {
     [prepareCommunityRoute, startCoord],
   );
 
+  const handleAuthSubmit = useCallback(() => {
+    setIsAuthenticated(true);
+    setAuthMode('login');
+    setAuthPassword('');
+    setActiveTab('home');
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    Alert.alert('로그아웃', '현재 계정에서 로그아웃할까요?', [
+      {text: '취소', style: 'cancel'},
+      {
+        text: '로그아웃',
+        onPress: () => {
+          setIsAuthenticated(false);
+          setAuthMode('login');
+          setAuthPassword('');
+          setSelectedProfileRunId(null);
+        },
+      },
+    ]);
+  }, []);
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      '회원탈퇴',
+      '계정과 러닝 기록이 삭제되는 흐름입니다. 지금은 API 연결 전이라 화면 상태만 초기화합니다.',
+      [
+        {text: '취소', style: 'cancel'},
+        {
+          text: '탈퇴',
+          style: 'destructive',
+          onPress: () => {
+            setIsAuthenticated(false);
+            setAuthMode('signup');
+            setAuthPassword('');
+            setSavedRuns(INITIAL_RUNS);
+            setSelectedProfileRunId(null);
+          },
+        },
+      ],
+    );
+  }, []);
+
   const renderPlan = () => (
-    <ScrollView
-      style={[styles.panelScroll, styles.navigationPanelScroll]}
-      contentContainerStyle={[styles.panelContent, styles.navigationPanelContent]}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled">
-      <View style={styles.runBottomSheet}>
-        <View style={styles.sheetDragHandleArea} {...sheetPanResponder.panHandlers}>
-          <View style={styles.sheetDragHandle} />
-        </View>
-        <View style={styles.sectionHeader}>
-          <View style={styles.sheetHeaderRow}>
-            <Text style={styles.sectionTitle}>AI 루트 생성</Text>
-            <TouchableOpacity style={styles.sheetHeaderButton} onPress={() => setActiveTab('home')}>
-              <Text style={styles.sheetHeaderButtonText}>홈</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.sectionMeta}>모양, 거리, 페이스를 한 번에 설정</Text>
-        </View>
-
-      <View style={styles.runSetupCard}>
-        <View style={styles.runSetupHeader}>
-          <View>
-            <Text style={styles.runSetupKicker}>현재 설정</Text>
-            <Text style={styles.runSetupTitle}>
-              {shapePrompt.trim() || '커스텀'} · {distance.toFixed(1)} km
-            </Text>
-          </View>
-          <View style={styles.runSetupBadge}>
-            <Text style={styles.runSetupBadgeText}>{activity}</Text>
-          </View>
-        </View>
-        <View style={styles.runSetupGrid}>
-          <View style={styles.runSetupMetric}>
-            <Text style={styles.runSetupMetricLabel}>목표 페이스</Text>
-            <Text style={styles.runSetupMetricValue}>
-              {Math.floor(targetPace)}'{Math.round((targetPace % 1) * 60).toString().padStart(2, '0')}"
-            </Text>
-          </View>
-          <View style={styles.runSetupMetric}>
-            <Text style={styles.runSetupMetricLabel}>음성 안내</Text>
-            <Text style={styles.runSetupMetricValue}>{preferences.voiceCoach ? 'ON' : 'OFF'}</Text>
-          </View>
-          <View style={styles.runSetupMetric}>
-            <Text style={styles.runSetupMetricLabel}>EDM 조절</Text>
-            <Text style={styles.runSetupMetricValue}>{preferences.adaptiveMusic ? 'ON' : 'OFF'}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.inputBlock}>
-        <Text style={styles.inputLabel}>원하는 모양</Text>
-        <TextInput
-          value={shapePrompt}
-          onChangeText={text => {
-            setShapePrompt(text);
-            setRouteStats(null);
-            setRoutePhase('idle');
-          }}
-          placeholder="예: 별, 번개, 토끼, ART RUN"
-          placeholderTextColor="#9ca3af"
-          style={styles.textInput}
-        />
-      </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipRow}>
-        {PRESET_SHAPES.map(item => {
-          const active = item.key === selectedShape && shapePrompt === item.label;
-          return (
-            <TouchableOpacity
-              key={item.key}
-              style={[styles.shapeChip, active && styles.shapeChipActive]}
-              onPress={() => {
-                setSelectedShape(item.key);
-                setShapePrompt(item.label);
-                setRouteStats(null);
-                setRoutePhase('idle');
-              }}
-              activeOpacity={0.78}>
-              <View style={[styles.shapeIconBox, active && styles.shapeIconBoxActive]}>
-                <ShapePresetIcon name={item.icon} active={active} />
-              </View>
-              <View style={styles.shapeChipCopy}>
-                <Text style={[styles.shapeChipText, active && styles.shapeChipTextActive]}>
-                  {item.label}
-                </Text>
-                <Text style={[styles.shapeChipHint, active && styles.shapeChipTextActive]}>
-                  {item.hint}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      <View style={styles.gridTwo}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>목표 거리</Text>
-          <Text style={styles.metricValue}>{distance.toFixed(1)} km</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>목표 페이스</Text>
-          <Text style={styles.metricValue}>
-            {Math.floor(targetPace)}'{Math.round((targetPace % 1) * 60).toString().padStart(2, '0')}"
-          </Text>
-        </View>
-      </View>
-
-      <Slider
-        style={styles.slider}
-        minimumValue={1}
-        maximumValue={20}
-        step={0.5}
-        value={distance}
-        onValueChange={value => {
-          setDistance(value);
-          setRouteStats(null);
-          setRoutePhase('idle');
-        }}
-        minimumTrackTintColor={GREEN}
-        maximumTrackTintColor="#d1d5db"
-        thumbTintColor={GREEN}
-      />
-      <Slider
-        style={styles.slider}
-        minimumValue={4}
-        maximumValue={8}
-        step={0.05}
-        value={targetPace}
-        onValueChange={setTargetPace}
-        minimumTrackTintColor={BLUE}
-        maximumTrackTintColor="#d1d5db"
-        thumbTintColor={BLUE}
-      />
-
-      <View style={styles.segmented}>
-        {(['Running', 'Walking', 'Cycling'] as Activity[]).map(item => (
-          <TouchableOpacity
-            key={item}
-            style={[styles.segment, activity === item && styles.segmentActive]}
-            onPress={() => setActivity(item)}
-            activeOpacity={0.75}>
-            <Text style={[styles.segmentText, activity === item && styles.segmentTextActive]}>
-              {item}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.optionList}>
-        <ToggleRow
-          label="대로 회피"
-          value={preferences.avoidMainRoad}
-          onValueChange={value => setPreferences(prev => ({...prev, avoidMainRoad: value}))}
-        />
-        <ToggleRow
-          label="공원길 선호"
-          value={preferences.preferPark}
-          onValueChange={value => setPreferences(prev => ({...prev, preferPark: value}))}
-        />
-        <ToggleRow
-          label="AI EDM 페이스 조절"
-          value={preferences.adaptiveMusic}
-          onValueChange={value => setPreferences(prev => ({...prev, adaptiveMusic: value}))}
-        />
-        <ToggleRow
-          label="실시간 음성 안내"
-          value={preferences.voiceCoach}
-          onValueChange={value => setPreferences(prev => ({...prev, voiceCoach: value}))}
-        />
-      </View>
-
-      <TouchableOpacity style={styles.locationButton} onPress={handleGetLocation}>
-        <View style={styles.locationIconBox}>
-          <LocateFixed size={22} color="#38bdf8" strokeWidth={2.5} />
-        </View>
-        <View style={styles.locationTextBox}>
-          <Text style={styles.locationTitle}>출발 지점</Text>
-          <Text style={styles.locationSub}>
-            {startCoord.lat.toFixed(4)}, {startCoord.lng.toFixed(4)}
-          </Text>
-        </View>
-      </TouchableOpacity>
-
-      {routeStats && <RouteReadyCard stats={routeStats} />}
-
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[styles.secondaryButton, (!routeStats || isGenerating) && styles.buttonDisabled]}
-            onPress={handleRegenerate}
-            disabled={!routeStats || isGenerating}
-            activeOpacity={0.84}>
-            <Text style={styles.secondaryButtonText}>재생성</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.primaryButton, (!mapReady || isGenerating) && styles.buttonDisabled]}
-            onPress={routeStats ? handleStartRun : handleGenerate}
-            disabled={!mapReady || isGenerating}
-            activeOpacity={0.86}>
-            <Text style={styles.primaryButtonText}>
-              {isGenerating ? '생성 중' : routeStats ? '러닝 시작' : '경로 생성'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </ScrollView>
+    <RunPlanScreen
+      sheetPanResponder={sheetPanResponder}
+      activity={activity}
+      preferences={preferences}
+      shapePrompt={shapePrompt}
+      selectedShape={selectedShape}
+      distance={distance}
+      targetPace={targetPace}
+      startCoord={startCoord}
+      routeStats={routeStats}
+      isGenerating={isGenerating}
+      mapReady={mapReady}
+      sheetScrollBottomInset={sheetScrollBottomInset}
+      onGoHome={() => setActiveTab('home')}
+      onChangeShapePrompt={text => {
+        setShapePrompt(text);
+        setRouteStats(null);
+        setRoutePhase('idle');
+      }}
+      onSelectShape={item => {
+        setSelectedShape(item.key);
+        setShapePrompt(item.label);
+        setRouteStats(null);
+        setRoutePhase('idle');
+      }}
+      onChangeDistance={value => {
+        setDistance(value);
+        setRouteStats(null);
+        setRoutePhase('idle');
+      }}
+      onChangeTargetPace={setTargetPace}
+      onChangeActivity={setActivity}
+      onChangePreferences={setPreferences}
+      onGetLocation={handleGetLocation}
+      onRegenerate={handleRegenerate}
+      onGenerate={handleGenerate}
+      onStartRun={handleStartRun}
+    />
   );
 
   const renderHome = () => (
-    <ScrollView
-      style={styles.homeScroll}
-      contentContainerStyle={styles.homeContent}
-      showsVerticalScrollIndicator={false}>
-      <View style={styles.homeHero}>
-        <View style={styles.heroShadePanel} />
-        <View style={styles.heroTopRow}>
-          <View>
-            <Text style={styles.heroKicker}>오늘의 추천 루트</Text>
-            <Text style={styles.heroTitle}>서울숲 스타 루트</Text>
-            <Text style={styles.heroReason}>5km 가볍게 뛰기 좋은 공원길 중심 코스</Text>
-          </View>
-        </View>
-
-        <View style={styles.heroRouteCard}>
-          <View style={styles.heroMapPreview}>
-            <Image
-              source={{uri: ROUTE_IMAGES.seoulForest}}
-              style={styles.previewImage}
-              resizeMode="cover"
-            />
-            <View style={styles.previewScrim} />
-            <View style={styles.previewBadge}>
-              <Text style={styles.previewBadgeText}>추천</Text>
-            </View>
-          </View>
-          <View style={styles.heroRouteInfo}>
-            <View style={styles.heroStatRow}>
-              <View style={styles.heroStatPill}>
-                <Text style={styles.heroStatLabel}>거리</Text>
-                <Text style={styles.heroStatValue}>5.0 km</Text>
-              </View>
-              <View style={styles.heroStatPill}>
-                <Text style={styles.heroStatLabel}>예상</Text>
-                <Text style={styles.heroStatValue}>28분</Text>
-              </View>
-              <View style={styles.heroStatPill}>
-                <Text style={styles.heroStatLabel}>음악</Text>
-                <Text style={styles.heroStatValue}>156 BPM</Text>
-              </View>
-            </View>
-            <Text style={styles.heroRouteHint}>공원길 위주 · 신호 적음 · 별 모양 완주 가능</Text>
-          </View>
-        </View>
-
-        <View style={styles.heroBottomRow}>
-          <View>
-            <Text style={styles.heroRouteName}>추천 루트를 바로 설정해볼까요?</Text>
-            <Text style={styles.heroRouteMeta}>러닝 탭에서 거리와 페이스를 조정할 수 있어요</Text>
-          </View>
-          <TouchableOpacity style={styles.heroButton} onPress={() => setActiveTab('run')}>
-            <Text style={styles.heroButtonText}>러닝 준비</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.quickCreateCard}>
-        <View style={styles.quickCreateHeader}>
-          <View>
-            <Text style={styles.quickCreateKicker}>빠른 루트 생성</Text>
-            <Text style={styles.quickCreateTitle}>조건만 고르고 바로 만들기</Text>
-          </View>
-          <View style={styles.quickCreateIcon}>
-            <RouteIcon size={25} color="#38bdf8" strokeWidth={2.5} />
-          </View>
-        </View>
-        <View style={styles.quickPromptBox}>
-          <TextInput
-            value={shapePrompt}
-            onChangeText={text => {
-              setShapePrompt(text);
-              setRouteStats(null);
-              setRoutePhase('idle');
-            }}
-            placeholder="원하는 모양 입력"
-            placeholderTextColor="#64748b"
-            style={styles.quickPromptInput}
-          />
-        </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.quickWheelContent}>
-          {PRESET_SHAPES.map(item => {
-            const active = shapePrompt === item.label;
-            return (
-              <TouchableOpacity
-                key={item.key}
-                style={[styles.quickWheelItem, active && styles.quickWheelItemActive]}
-                onPress={() => {
-                  setSelectedShape(item.key);
-                  setShapePrompt(item.label);
-                }}
-                activeOpacity={0.78}>
-                <Text style={[styles.quickWheelText, active && styles.quickWheelTextActive]}>
-                  {item.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-        <View style={styles.quickDistanceRow}>
-          {[3, 5, 8].map(km => {
-            const active = distance === km;
-            return (
-              <TouchableOpacity
-                key={km}
-                style={[styles.quickDistance, active && styles.quickDistanceActive]}
-                onPress={() => setDistance(km)}
-                activeOpacity={0.78}>
-                <Text style={[styles.quickDistanceText, active && styles.quickDistanceTextActive]}>
-                  {km} km
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-          <TouchableOpacity
-            style={[styles.quickGenerateButton, pendingQuickGenerate && styles.buttonDisabled]}
-            onPress={handleQuickGenerate}
-            disabled={pendingQuickGenerate}
-            activeOpacity={0.86}>
-            <Text style={styles.quickGenerateText}>바로 생성</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.sectionHeaderInline}>
-        <Text style={styles.homeSectionTitle}>커뮤니티 인기</Text>
-        <TouchableOpacity onPress={() => setActiveTab('community')}>
-          <Text style={styles.homeSectionLink}>전체보기</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.popularRouteScroller}>
-        {COMMUNITY_RUNS.map((run, index) => (
-          <TouchableOpacity
-            key={run.id}
-            style={styles.popularRouteCard}
-            onPress={() => setActiveTab('community')}
-            activeOpacity={0.82}>
-            <View style={styles.popularMapPreview}>
-              <Image
-                source={{
-                  uri:
-                    index === 0
-                      ? ROUTE_IMAGES.seoulForest
-                      : index === 1
-                        ? ROUTE_IMAGES.hangang
-                        : ROUTE_IMAGES.lake,
-                }}
-                style={styles.previewImage}
-                resizeMode="cover"
-              />
-              <View style={styles.previewScrim} />
-              <View style={styles.popularImageLabel}>
-                <Text style={styles.popularImageLabelText}>
-                  {index === 0 ? '서울숲' : index === 1 ? '한강' : '석촌호수'}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.popularRouteBody}>
-              <Text style={styles.popularTitle}>{run.shape} 루트</Text>
-              <Text style={styles.popularLocation}>
-                {index === 0 ? '서울숲 · 성수' : index === 1 ? '여의도 한강공원' : '잠실 · 석촌호수'}
-              </Text>
-              <Text style={styles.popularSub}>{run.distance} · 일치율 {run.matchPct}%</Text>
-              <View style={styles.popularUserRow}>
-                <View style={styles.popularAvatar}>
-                  <Text style={styles.popularAvatarText}>
-                    {index === 0 ? 'J' : index === 1 ? 'M' : 'S'}
-                  </Text>
-                </View>
-                <Text style={styles.popularUser}>
-                  {index === 0 ? 'Jin Runner' : index === 1 ? 'Mina' : 'Sean'} · 좋아요 {index === 0 ? '2.4k' : index === 1 ? '1.8k' : '1.3k'}
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </ScrollView>
+    <HomeScreen
+      shapePrompt={shapePrompt}
+      distance={distance}
+      pendingQuickGenerate={pendingQuickGenerate}
+      onChangeShapePrompt={text => {
+        setShapePrompt(text);
+        setRouteStats(null);
+        setRoutePhase('idle');
+      }}
+      onSelectPresetShape={item => {
+        setSelectedShape(item.key);
+        setShapePrompt(item.label);
+      }}
+      onSelectDistance={setDistance}
+      onQuickGenerate={handleQuickGenerate}
+      onOpenRun={() => setActiveTab('run')}
+      onOpenCommunity={() => setActiveTab('community')}
+    />
   );
 
   const renderRunMode = () => (
-    <ScrollView
-      style={[styles.panelScroll, styles.navigationPanelScroll]}
-      contentContainerStyle={[styles.panelContent, styles.navigationPanelContent]}
-      showsVerticalScrollIndicator={false}>
-      {routePhase === 'complete' ? (
-        <View style={styles.finishPanel}>
-          <View style={styles.sheetDragHandleArea} {...sheetPanResponder.panHandlers}>
-            <View style={styles.sheetDragHandle} />
-          </View>
-          <View style={styles.finishIcon}>
-            <Check size={30} color="#fff" strokeWidth={3} />
-          </View>
-          <Text style={styles.finishKicker}>완주 완료</Text>
-          <Text style={styles.finishTitle}>{shapePrompt} 러닝을 완주했습니다</Text>
-          <Text style={styles.finishSub}>기록이 저장되었고, 마이페이지에서 공유할 수 있습니다.</Text>
-
-          <View style={styles.finishStats}>
-            <View style={styles.finishStat}>
-              <Text style={styles.finishStatLabel}>거리</Text>
-              <Text style={styles.finishStatValue}>{distance.toFixed(1)} km</Text>
-            </View>
-            <View style={styles.finishStat}>
-              <Text style={styles.finishStatLabel}>일치율</Text>
-              <Text style={styles.finishStatValue}>{routeStats?.matchPct || 92}%</Text>
-            </View>
-            <View style={styles.finishStat}>
-              <Text style={styles.finishStatLabel}>평균 BPM</Text>
-              <Text style={styles.finishStatValue}>{currentBpm}</Text>
-            </View>
-          </View>
-
-          <View style={styles.finishActions}>
-            <TouchableOpacity style={styles.secondaryButtonFlex} onPress={() => setActiveTab('home')}>
-              <Text style={styles.secondaryButtonText}>홈으로</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.primaryButton} onPress={handleNewRun}>
-              <Text style={styles.primaryButtonText}>새 루트 만들기</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.guidancePanel}>
-          <View style={styles.sheetDragHandleArea} {...sheetPanResponder.panHandlers}>
-            <View style={styles.sheetDragHandle} />
-          </View>
-          <View style={styles.guidanceHeader}>
-            <View>
-              <Text style={styles.guidanceKicker}>안내 중</Text>
-              <Text style={styles.guidanceTitle}>다음 포인트까지 320m</Text>
-            </View>
-            <View style={styles.guidanceBadge}>
-              <Text style={styles.guidanceBadgeText}>{Math.round(runProgress * 100)}%</Text>
-            </View>
-          </View>
-
-          <View style={styles.guidanceInstruction}>
-            <View style={styles.guidanceInstructionIcon}>
-              <Navigation size={22} color="#fff" strokeWidth={2.7} />
-            </View>
-            <View style={styles.guidanceInstructionTextBox}>
-              <Text style={styles.guidanceInstructionTitle}>{shapePrompt} 라인 유지</Text>
-              <Text style={styles.guidanceInstructionSub}>목표 페이스로 직진 후 좌측 라인에 진입하세요</Text>
-            </View>
-          </View>
-
-          <View style={styles.guidanceStats}>
-            <View style={styles.guidanceStat}>
-              <Text style={styles.guidanceStatLabel}>이동</Text>
-              <Text style={styles.guidanceStatValue}>{progressDistance} km</Text>
-            </View>
-            <View style={styles.guidanceStat}>
-              <Text style={styles.guidanceStatLabel}>페이스</Text>
-              <Text style={styles.guidanceStatValue}>
-                {Math.floor(currentPace)}'{Math.round((currentPace % 1) * 60).toString().padStart(2, '0')}"
-              </Text>
-            </View>
-            <View style={styles.guidanceStat}>
-              <Text style={styles.guidanceStatLabel}>BPM</Text>
-              <Text style={styles.guidanceStatValue}>{currentBpm}</Text>
-            </View>
-          </View>
-
-          <View style={styles.guidanceVoice}>
-            <View style={styles.guidanceVoiceIcon}>
-              <Play size={14} color="#fff" fill="#fff" strokeWidth={2.5} />
-            </View>
-            <Text style={styles.guidanceVoiceText}>{voiceCue}</Text>
-          </View>
-        </View>
-      )}
-    </ScrollView>
+    <RunModeScreen
+      sheetPanResponder={sheetPanResponder}
+      routePhase={routePhase}
+      shapePrompt={shapePrompt}
+      distance={distance}
+      routeStats={routeStats}
+      currentBpm={currentBpm}
+      runProgress={runProgress}
+      progressDistance={progressDistance}
+      currentPace={currentPace}
+      voiceCue={voiceCue}
+      sheetScrollBottomInset={sheetScrollBottomInset}
+      averagePaceLabel={averagePaceLabel}
+      elapsedTimeLabel={elapsedTimeLabel}
+      shareMapImageUrl={shareMapImageUrl}
+      shareCardSaved={shareCardSaved}
+      onSaveShareCard={handleSaveShareCard}
+      onGoHome={() => setActiveTab('home')}
+      onNewRun={handleNewRun}
+    />
   );
 
-  const renderCommunity = () => {
-    const runs = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
-    const routeImages = [ROUTE_IMAGES.seoulForest, ROUTE_IMAGES.hangang, ROUTE_IMAGES.lake, ROUTE_IMAGES.cityPark];
-    const detailRun = selectedCommunityId
-      ? runs.find(run => run.id === selectedCommunityId)
-      : null;
-    const detailIndex = detailRun ? Math.max(0, runs.findIndex(run => run.id === detailRun.id)) : 0;
-    const normalizedQuery = communityQuery.trim().toLowerCase();
-    const filteredRuns = runs.filter(run => {
-      const actions = communityActions[run.id] || {
-        liked: false,
-        saved: Boolean(run.saved),
-      };
-      const routeStart = run.startCoord || startCoord;
-      const startDistance = distanceBetweenCoords(startCoord, routeStart);
-      const searchText = [
-        run.shape,
-        run.location,
-        run.author,
-        run.description,
-        ...(run.tags || []),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      const matchesQuery = !normalizedQuery || searchText.includes(normalizedQuery);
-      const matchesFilter =
-        communityFilter === '전체' ||
-        (communityFilter === '인기' && (run.likes || 0) >= 1000) ||
-        (communityFilter === '저장' && actions.saved) ||
-        (communityFilter === '근처' && startDistance <= 1.2);
+  const renderCommunity = () => (
+    <CommunityScreen
+      savedRuns={savedRuns}
+      communityActions={communityActions}
+      selectedCommunityId={selectedCommunityId}
+      communityQuery={communityQuery}
+      communityFilter={communityFilter}
+      startCoord={startCoord}
+      onSelectCommunityId={setSelectedCommunityId}
+      onChangeQuery={setCommunityQuery}
+      onChangeFilter={setCommunityFilter}
+      onToggleAction={toggleCommunityAction}
+      onUseRoute={handleUseCommunityRoute}
+    />
+  );
 
-      return matchesQuery && matchesFilter;
-    });
-
-    if (detailRun) {
-      const actions = communityActions[detailRun.id] || {
-        liked: false,
-        saved: Boolean(detailRun.saved),
-      };
-      const routeStart = detailRun.startCoord || startCoord;
-      const startDistance = distanceBetweenCoords(startCoord, routeStart);
-      const isNearStart = startDistance <= 1.2;
-      const likes = (detailRun.likes || 320) + (actions.liked ? 1 : 0);
-      const imageUri = routeImages[detailIndex % routeImages.length];
-
-      return (
-        <ScrollView
-          style={styles.panelScroll}
-          contentContainerStyle={styles.panelContent}
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.communityDetailHeader}>
-            <TouchableOpacity
-              style={styles.communityBackButton}
-              onPress={() => setSelectedCommunityId(null)}
-              activeOpacity={0.78}>
-              <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
-            </TouchableOpacity>
-            <View style={styles.communityDetailHeaderText}>
-              <Text style={styles.communityDetailKicker}>ROUTE DETAIL</Text>
-              <Text style={styles.communityDetailTitle}>{detailRun.shape} 루트</Text>
-            </View>
-          </View>
-
-          <View style={styles.communityDetailMapCard}>
-            <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
-            <View style={styles.previewScrim} />
-            <View style={styles.communityDetailMapTop}>
-              <View style={styles.communityLocationPill}>
-                <MapPin size={13} color="#fff" strokeWidth={2.5} />
-                <Text style={styles.communityLocationPillText}>
-                  {detailRun.location || '내 공유 루트'}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.communityStartBadge,
-                  isNearStart && styles.communityStartBadgeOk,
-                ]}>
-                <ShieldCheck
-                  size={13}
-                  color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
-                  strokeWidth={2.6}
-                />
-                <Text
-                  style={[
-                    styles.communityStartBadgeText,
-                    isNearStart && styles.communityStartBadgeTextOk,
-                  ]}>
-                  {isNearStart ? '현재 위치에서 시작 가능' : `시작점 ${startDistance.toFixed(1)}km`}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.communityDetailMapBottom}>
-              <Text style={styles.communityDetailMapTitle}>전체 루트 지도</Text>
-              <Text style={styles.communityDetailMapSub}>
-                시작점 기준으로 루트를 불러와 러닝 탭에서 실제 경로를 생성합니다.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.communityDetailSummary}>
-            <View style={styles.communityDetailMetric}>
-              <Text style={styles.communityDetailMetricLabel}>거리</Text>
-              <Text style={styles.communityDetailMetricValue}>{detailRun.distance}</Text>
-            </View>
-            <View style={styles.communityDetailMetric}>
-              <Text style={styles.communityDetailMetricLabel}>페이스</Text>
-              <Text style={styles.communityDetailMetricValue}>{detailRun.pace}</Text>
-            </View>
-            <View style={styles.communityDetailMetric}>
-              <Text style={styles.communityDetailMetricLabel}>일치율</Text>
-              <Text style={styles.communityDetailMetricValue}>{detailRun.matchPct}%</Text>
-            </View>
-          </View>
-
-          <View style={styles.communityDetailSection}>
-            <View style={styles.communityRouteTitleRow}>
-              <View style={styles.communityRouteTitleBox}>
-                <Text style={styles.communityDetailSectionTitle}>루트 설명</Text>
-                <Text style={styles.communityAuthorText}>
-                  {detailRun.author || '내 기록'} · 좋아요 {likes >= 1000 ? `${(likes / 1000).toFixed(1)}k` : likes}
-                </Text>
-              </View>
-              <View style={styles.communityAuthorBadge}>
-                <Text style={styles.communityAuthorInitial}>
-                  {(detailRun.author || '나').slice(0, 1)}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.communityDetailText}>
-              {detailRun.description || '내가 완주한 러닝 아트 루트입니다. 같은 조건으로 다시 생성해서 달릴 수 있습니다.'}
-            </Text>
-            <View style={styles.communityTags}>
-              {(detailRun.tags || ['내 기록', '공유됨']).map(tag => (
-                <View key={tag} style={styles.communityTag}>
-                  <Text style={styles.communityTagText}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.communityDetailActions}>
-            <TouchableOpacity
-              style={styles.communityDetailIconAction}
-              onPress={() => toggleCommunityAction(detailRun.id, 'liked')}
-              activeOpacity={0.75}>
-              <Heart
-                size={19}
-                color={actions.liked ? '#38bdf8' : '#94a3b8'}
-                fill={actions.liked ? '#38bdf8' : 'transparent'}
-                strokeWidth={2.4}
-              />
-              <Text style={styles.communityDetailIconActionText}>좋아요</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.communityDetailIconAction}
-              onPress={() => toggleCommunityAction(detailRun.id, 'saved')}
-              activeOpacity={0.75}>
-              <Bookmark
-                size={19}
-                color={actions.saved ? '#38bdf8' : '#94a3b8'}
-                fill={actions.saved ? '#38bdf8' : 'transparent'}
-                strokeWidth={2.4}
-              />
-              <Text style={styles.communityDetailIconActionText}>저장</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.communityDetailRunAction}
-              onPress={() => handleUseCommunityRoute(detailRun)}
-              activeOpacity={0.84}>
-              <PlayCircle size={18} color="#fff" strokeWidth={2.5} />
-              <Text style={styles.communityRunButtonText}>이 루트로 뛰기</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      );
-    }
-
-    return (
-      <ScrollView
-        style={styles.panelScroll}
-        contentContainerStyle={styles.panelContent}
-        showsVerticalScrollIndicator={false}>
-        <View style={styles.communitySearchCard}>
-          <View style={styles.communitySearchBox}>
-            <Search size={18} color="#94a3b8" strokeWidth={2.5} />
-            <TextInput
-              value={communityQuery}
-              onChangeText={setCommunityQuery}
-              placeholder="모양, 지역, 작성자 검색"
-              placeholderTextColor="#64748b"
-              style={styles.communitySearchInput}
-            />
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.communityFilterRow}>
-            {COMMUNITY_FILTERS.map(filter => {
-              const active = communityFilter === filter;
-              return (
-                <TouchableOpacity
-                  key={filter}
-                  style={[styles.communityFilterChip, active && styles.communityFilterChipActive]}
-                  onPress={() => setCommunityFilter(filter)}
-                  activeOpacity={0.78}>
-                  <Text
-                    style={[
-                      styles.communityFilterText,
-                      active && styles.communityFilterTextActive,
-                    ]}>
-                    {filter}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {filteredRuns.map((run, index) => {
-          const actions = communityActions[run.id] || {
-            liked: false,
-            saved: Boolean(run.saved),
-          };
-          const likes = (run.likes || 320) + (actions.liked ? 1 : 0);
-          const routeStart = run.startCoord || startCoord;
-          const startDistance = distanceBetweenCoords(startCoord, routeStart);
-          const isNearStart = startDistance <= 1.2;
-          const imageUri = routeImages[index % routeImages.length];
-
-          return (
-            <TouchableOpacity
-              key={run.id}
-              style={styles.communityRouteCard}
-              onPress={() => setSelectedCommunityId(run.id)}
-              activeOpacity={0.86}>
-              <View style={styles.communityRouteImageBox}>
-                <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
-                <View style={styles.previewScrim} />
-                <View style={styles.communityImageTopRow}>
-                  <View style={styles.communityLocationPill}>
-                    <MapPin size={13} color="#fff" strokeWidth={2.5} />
-                    <Text style={styles.communityLocationPillText}>
-                      {run.location || '내 공유 루트'}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.communityStartBadge,
-                      isNearStart && styles.communityStartBadgeOk,
-                    ]}>
-                    <ShieldCheck
-                      size={13}
-                      color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
-                      strokeWidth={2.6}
-                    />
-                    <Text
-                      style={[
-                        styles.communityStartBadgeText,
-                        isNearStart && styles.communityStartBadgeTextOk,
-                      ]}>
-                      {isNearStart ? '시작 가능' : `${startDistance.toFixed(1)}km`}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={styles.communityRouteBody}>
-                <View style={styles.communityRouteTitleRow}>
-                  <View style={styles.communityRouteTitleBox}>
-                    <Text style={styles.communityRouteTitle}>{run.shape} 루트</Text>
-                    <Text style={styles.communityRouteMeta}>
-                      {run.distance} · {run.pace} · 일치율 {run.matchPct}%
-                    </Text>
-                  </View>
-                  <View style={styles.communityAuthorBadge}>
-                    <Text style={styles.communityAuthorInitial}>
-                      {(run.author || '나').slice(0, 1)}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text style={styles.communityAuthorText}>
-                  {run.author || '내 기록'} · 좋아요 {likes >= 1000 ? `${(likes / 1000).toFixed(1)}k` : likes}
-                </Text>
-
-                <View style={styles.communityActionRow}>
-                  <TouchableOpacity
-                    style={styles.communityIconButton}
-                    onPress={() => toggleCommunityAction(run.id, 'liked')}
-                    activeOpacity={0.75}>
-                    <Heart
-                      size={18}
-                      color={actions.liked ? '#38bdf8' : '#94a3b8'}
-                      fill={actions.liked ? '#38bdf8' : 'transparent'}
-                      strokeWidth={2.4}
-                    />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.communityIconButton}
-                    onPress={() => toggleCommunityAction(run.id, 'saved')}
-                    activeOpacity={0.75}>
-                    <Bookmark
-                      size={18}
-                      color={actions.saved ? '#38bdf8' : '#94a3b8'}
-                      fill={actions.saved ? '#38bdf8' : 'transparent'}
-                      strokeWidth={2.4}
-                    />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.communityRunButton}
-                    onPress={() => handleUseCommunityRoute(run)}
-                    activeOpacity={0.84}>
-                    <PlayCircle size={17} color="#fff" strokeWidth={2.5} />
-                    <Text style={styles.communityRunButtonText}>이 루트로 뛰기</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-        {filteredRuns.length === 0 && (
-          <View style={styles.communityEmptyBox}>
-            <Text style={styles.communityEmptyTitle}>조건에 맞는 루트가 없습니다</Text>
-            <Text style={styles.communityEmptyText}>검색어나 필터를 바꿔 다시 찾아보세요.</Text>
-          </View>
-        )}
-      </ScrollView>
-    );
-  };
+  const renderAuth = () => (
+    <AuthScreen
+      authMode={authMode}
+      authName={authName}
+      authEmail={authEmail}
+      authPassword={authPassword}
+      onChangeAuthMode={setAuthMode}
+      onChangeName={setAuthName}
+      onChangeEmail={setAuthEmail}
+      onChangePassword={setAuthPassword}
+      onSubmit={handleAuthSubmit}
+    />
+  );
 
   const renderProfile = () => (
-    <ScrollView
-      style={styles.panelScroll}
-      contentContainerStyle={styles.panelContent}
-      showsVerticalScrollIndicator={false}>
-      <View style={styles.profileHeader}>
-        <View style={styles.profileBlade} />
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>AR</Text>
-        </View>
-        <View>
-          <Text style={styles.profileName}>Art Runner</Text>
-          <Text style={styles.profileSub}>이번 달 42.6 km · 공유 루트 {savedRuns.filter(run => run.shared).length}개</Text>
-        </View>
-      </View>
-
-      <View style={styles.gridThree}>
-        <View style={styles.liveCard}>
-          <Text style={styles.liveLabel}>완주</Text>
-          <Text style={styles.liveValue}>{savedRuns.length}</Text>
-        </View>
-        <View style={styles.liveCard}>
-          <Text style={styles.liveLabel}>평균 일치</Text>
-          <Text style={styles.liveValue}>93%</Text>
-        </View>
-        <View style={styles.liveCard}>
-          <Text style={styles.liveLabel}>배지</Text>
-          <Text style={styles.liveValue}>8</Text>
-        </View>
-      </View>
-
-      <Text style={styles.listTitle}>내 완주 기록</Text>
-      {savedRuns.map(run => (
-        <RunCard
-          key={run.id}
-          run={run}
-          cta={run.shared ? '공유됨' : '공유'}
-          onPress={() => toggleShare(run.id)}
-        />
-      ))}
-    </ScrollView>
+    <ProfileScreen
+      authName={authName}
+      authEmail={authEmail}
+      savedRuns={savedRuns}
+      preferences={preferences}
+      selectedRunId={selectedProfileRunId}
+      onSelectRun={setSelectedProfileRunId}
+      onToggleShare={toggleShare}
+      onChangePreferences={setPreferences}
+      onLogout={handleLogout}
+      onDeleteAccount={handleDeleteAccount}
+    />
   );
 
   const isNavigationMode = activeTab === 'run';
+
+  if (!isAuthenticated) {
+    return (
+      <View style={[styles.root, {paddingTop: insets.top}]}>
+        <StatusBar barStyle="light-content" backgroundColor="#151c2b" />
+        <View style={styles.contentShell}>{renderAuth()}</View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, {paddingTop: isNavigationMode ? 0 : insets.top}]}>
@@ -1305,74 +679,66 @@ export default function ShapeRunApp() {
         </View>
       )}
 
-      {activeTab === 'run' && (
-        <View
-          style={[
-            styles.mapShell,
-            activeTab === 'run' && styles.navigationMapShell,
-          ]}>
-          <WebView
-            ref={webViewRef}
-            source={{html: MAP_HTML}}
-            style={styles.webview}
-            onMessage={handleMessage}
-            javaScriptEnabled
-            domStorageEnabled
-            originWhitelist={['*']}
-            mixedContentMode="compatibility"
-            allowsInlineMediaPlayback
-          />
-          {routePhase === 'running' ? (
-            <>
-              <View style={styles.navigationBanner}>
-                <View style={styles.navigationBannerIcon}>
-                  <MapPinned size={17} color="#2f80ff" strokeWidth={2.7} />
+      {activeTab === 'run' ? (
+        <View style={styles.runNavigationStage}>
+          <View style={[styles.mapShell, styles.navigationMapShell, styles.navigationMapFull]}>
+            <WebView
+              ref={webViewRef}
+              source={{html: MAP_HTML, baseUrl: NAVER_MAP_WEB_BASE_URL}}
+              style={styles.webview}
+              onMessage={handleMessage}
+              javaScriptEnabled
+              domStorageEnabled
+              originWhitelist={['*']}
+              mixedContentMode="compatibility"
+              allowsInlineMediaPlayback
+            />
+            {routePhase === 'running' ? (
+              <>
+                <View style={styles.navigationBanner}>
+                  <View style={styles.navigationBannerIcon}>
+                    <MapPinned size={17} color="#2f80ff" strokeWidth={2.7} />
+                  </View>
+                  <View style={styles.navigationBannerTextBox}>
+                    <Text style={styles.navigationBannerTitle}>320m 앞 포인트 통과</Text>
+                    <Text style={styles.navigationBannerSub}>별 모양 상단 라인을 따라가세요</Text>
+                  </View>
                 </View>
-                <View style={styles.navigationBannerTextBox}>
-                  <Text style={styles.navigationBannerTitle}>320m 앞 포인트 통과</Text>
-                  <Text style={styles.navigationBannerSub}>별 모양 상단 라인을 따라가세요</Text>
+                <View style={styles.navigationPacePill}>
+                  <Text style={styles.navigationPaceText}>{currentBpm} BPM</Text>
+                </View>
+              </>
+            ) : null}
+            {(isGenerating || !mapReady) && (
+              <View style={styles.loadingOverlay}>
+                <View style={styles.loadingCard}>
+                  <ActivityIndicator color={GREEN} size="large" />
+                  <Text style={styles.loadingText}>{mapReady ? 'AI 경로 생성 중' : '지도 준비 중'}</Text>
                 </View>
               </View>
-              <View style={styles.navigationPacePill}>
-                <Text style={styles.navigationPaceText}>{currentBpm} BPM</Text>
-              </View>
-            </>
-          ) : (
-            <View style={styles.mapOverlay}>
-              <Text style={styles.mapTitle}>
-                {routeStats ? `${routeStats.shapeLabel} 루트` : '출발지를 정하고 루트를 생성하세요'}
-              </Text>
-              <Text style={styles.mapSub}>
-                {routeStats ? `${routeStats.distKm} km · 일치율 ${routeStats.matchPct}%` : '지도 탭으로 출발지 변경'}
-              </Text>
-            </View>
-          )}
-          {(isGenerating || !mapReady) && (
-            <View style={styles.loadingOverlay}>
-              <View style={styles.loadingCard}>
-                <ActivityIndicator color={GREEN} size="large" />
-                <Text style={styles.loadingText}>{mapReady ? 'AI 경로 생성 중' : '지도 준비 중'}</Text>
-              </View>
-            </View>
-          )}
+            )}
+          </View>
+
+          <Animated.View
+            style={[
+              styles.navigationSheetLayer,
+              {
+                height: sheetHeight,
+                transform: [{translateY: sheetOffset}],
+              },
+            ]}>
+            {routePhase === 'running' || routePhase === 'complete'
+              ? renderRunMode()
+              : renderPlan()}
+          </Animated.View>
+        </View>
+      ) : (
+        <View style={styles.contentShell}>
+          {activeTab === 'home' && renderHome()}
+          {activeTab === 'community' && renderCommunity()}
+          {activeTab === 'profile' && renderProfile()}
         </View>
       )}
-
-      <View
-        style={[
-          styles.contentShell,
-          activeTab === 'run' && styles.navigationContentShell,
-          activeTab === 'run' && sheetExpanded && styles.navigationContentShellExpanded,
-        ]}>
-        {activeTab === 'home' && renderHome()}
-        {activeTab === 'run' && (
-          routePhase === 'running' || routePhase === 'complete'
-            ? renderRunMode()
-            : renderPlan()
-        )}
-        {activeTab === 'community' && renderCommunity()}
-        {activeTab === 'profile' && renderProfile()}
-      </View>
 
       <View style={[styles.footer, {paddingBottom: Math.max(insets.bottom, 8)}]}>
         <FooterItem label="홈" icon="home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} />

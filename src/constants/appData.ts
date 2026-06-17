@@ -1,5 +1,7 @@
 import type {Activity, SavedRun} from '../types/app';
 
+export const COMMUNITY_FILTERS = ['전체', '인기', '저장', '근처'] as const;
+
 export const ACTIVITY_PROFILES: Record<Activity, string> = {
   Running: 'foot',
   Walking: 'foot',

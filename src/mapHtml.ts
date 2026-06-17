@@ -1,14 +1,22 @@
-// Embedded Leaflet map HTML rendered inside react-native-webview.
+import {NAVER_MAP_NCP_KEY_ID} from './config';
+
+const NAVER_MAP_SCRIPT_URL =
+  `https://oapi.map.naver.com/openapi/v3/maps.js?` +
+  `ncpKeyId=${NAVER_MAP_NCP_KEY_ID}&ncpClientId=${NAVER_MAP_NCP_KEY_ID}`;
+
+// Embedded NAVER map HTML rendered inside react-native-webview.
 // Communication protocol:
-//   RN → WebView: postMessage(JSON string)
-//     { type: 'GENERATE', shapePts, targetKm, profile, startLat, startLng }
+//   RN -> WebView: postMessage(JSON string)
+//     { type: 'GENERATE', shapePts, targetKm, startLat, startLng }
+//     { type: 'DRAW_ROUTE', points: [{lat, lng}], startLat?, startLng? }
+//     { type: 'UPDATE_RUNNER', location: {lat, lng} }
 //     { type: 'SET_LOCATION', lat, lng }
 //     { type: 'CLEAR' }
-//   WebView → RN: ReactNativeWebView.postMessage(JSON string)
+//   WebView -> RN: ReactNativeWebView.postMessage(JSON string)
 //     { type: 'READY' }
 //     { type: 'MAP_CLICK', lat, lng }
 //     { type: 'ROUTING_START' }
-//     { type: 'ROUTE_DONE', distM, durS }
+//     { type: 'ROUTE_DONE', distM, durS, routePoints }
 //     { type: 'ROUTE_ERROR', message }
 
 export const MAP_HTML = `<!DOCTYPE html>
@@ -16,47 +24,37 @@ export const MAP_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+  <script src="${NAVER_MAP_SCRIPT_URL}"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #e8eaed; }
     #map { width: 100%; height: 100%; }
-    .start-dot {
-      width: 16px;
-      height: 16px;
-      background: #f97316;
+    .marker-dot {
+      width: 18px;
+      height: 18px;
       border: 3px solid #fff;
       border-radius: 50%;
       box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     }
-    .leaflet-control-zoom {
-      margin-top: 12px !important;
-      margin-right: 12px !important;
+    .start-dot { background: #f97316; }
+    .runner-dot {
+      width: 20px;
+      height: 20px;
+      background: #2f80ff;
+      border: 4px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 12px rgba(47,128,255,0.55);
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <script>
-    var map = L.map('map', { zoomControl: false }).setView([37.5665, 126.9780], 14);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '\\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
-    }).addTo(map);
-
-    L.control.zoom({ position: 'topright' }).addTo(map);
-
-    var routeLayer = null;
+    var map = null;
+    var routeLine = null;
     var startMarker = null;
-
-    var startIcon = L.divIcon({
-      className: '',
-      html: '<div class="start-dot"></div>',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8],
-    });
+    var runnerMarker = null;
+    var startPosition = { lat: 37.5665, lng: 126.9780 };
 
     function send(data) {
       try {
@@ -66,129 +64,168 @@ export const MAP_HTML = `<!DOCTYPE html>
       } catch(e) {}
     }
 
-    map.on('click', function(e) {
-      send({ type: 'MAP_CLICK', lat: e.latlng.lat, lng: e.latlng.lng });
-    });
-
-    function setLocation(lat, lng) {
-      map.setView([lat, lng], 14);
-      if (startMarker) map.removeLayer(startMarker);
-      startMarker = L.marker([lat, lng], { icon: startIcon }).addTo(map);
+    function toLatLng(point) {
+      return new naver.maps.LatLng(point.lat, point.lng);
     }
 
-    function clearRoute() {
-      if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    function createHtmlMarker(position, html) {
+      return new naver.maps.Marker({
+        map: map,
+        position: position,
+        icon: {
+          content: html,
+          size: new naver.maps.Size(24, 24),
+          anchor: new naver.maps.Point(12, 12)
+        }
+      });
     }
 
-    function perimeter(pts) {
+    function setStartMarker(position) {
+      if (startMarker) startMarker.setMap(null);
+      startMarker = createHtmlMarker(
+        position,
+        '<div class="marker-dot start-dot"></div>'
+      );
+    }
+
+    function setRunnerMarker(position) {
+      if (!runnerMarker) {
+        runnerMarker = createHtmlMarker(position, '<div class="runner-dot"></div>');
+      } else {
+        runnerMarker.setPosition(position);
+      }
+    }
+
+    function haversineMeters(a, b) {
+      var earth = 6371000;
+      var toRad = function(deg) { return deg * Math.PI / 180; };
+      var dLat = toRad(b.lat - a.lat);
+      var dLng = toRad(b.lng - a.lng);
+      var lat1 = toRad(a.lat);
+      var lat2 = toRad(b.lat);
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+        + Math.cos(lat1) * Math.cos(lat2)
+        * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return 2 * earth * Math.asin(Math.sqrt(h));
+    }
+
+    function routeDistanceMeters(points) {
       var total = 0;
-      for (var i = 0; i < pts.length; i++) {
-        var a = pts[i], b = pts[(i + 1) % pts.length];
-        total += Math.sqrt(Math.pow(b[0]-a[0],2) + Math.pow(b[1]-a[1],2));
+      for (var i = 1; i < points.length; i++) {
+        total += haversineMeters(points[i - 1], points[i]);
       }
       return total;
     }
 
-    async function generateRoute(msg) {
-      var shapePts = msg.shapePts;
-      var targetKm = msg.targetKm;
-      var profile = msg.profile;
-      var startLat = msg.startLat;
-      var startLng = msg.startLng;
+    function fitRoute(path) {
+      if (!path.length) return;
+      var bounds = new naver.maps.LatLngBounds(path[0], path[0]);
+      path.forEach(function(point) {
+        bounds.extend(point);
+      });
+      map.fitBounds(bounds, { top: 70, right: 50, bottom: 70, left: 50 });
+    }
+
+    function clearRoute() {
+      if (routeLine) {
+        routeLine.setMap(null);
+        routeLine = null;
+      }
+    }
+
+    function drawPolyline(points, startLat, startLng) {
+      if (!points || !points.length) return;
+      var path = points.map(toLatLng);
+
+      clearRoute();
+      routeLine = new naver.maps.Polyline({
+        map: map,
+        path: path,
+        strokeColor: '#ef4444',
+        strokeOpacity: 0.95,
+        strokeWeight: 6,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round'
+      });
+
+      fitRoute(path);
+
+      var markerPoint = new naver.maps.LatLng(
+        startLat || points[0].lat,
+        startLng || points[0].lng
+      );
+      setStartMarker(markerPoint);
+    }
+
+    function shapePerimeter(pts) {
+      var total = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var a = pts[i], b = pts[(i + 1) % pts.length];
+        total += Math.sqrt(Math.pow(b[0] - a[0], 2) + Math.pow(b[1] - a[1], 2));
+      }
+      return total;
+    }
+
+    function generateRoute(msg) {
+      var shapePts = msg.shapePts || [];
+      var targetKm = msg.targetKm || 5;
+      var startLat = msg.startLat || startPosition.lat;
+      var startLng = msg.startLng || startPosition.lng;
+
+      if (!shapePts.length) {
+        send({ type: 'ROUTE_ERROR', message: 'shapePts is empty' });
+        return;
+      }
 
       send({ type: 'ROUTING_START' });
 
-      var peri = perimeter(shapePts);
+      var peri = shapePerimeter(shapePts);
       var scaleM = (targetKm * 1000) / peri;
-
       var cx = 0, cy = 0;
-      for (var i = 0; i < shapePts.length; i++) { cx += shapePts[i][0]; cy += shapePts[i][1]; }
-      cx /= shapePts.length; cy /= shapePts.length;
+      for (var i = 0; i < shapePts.length; i++) {
+        cx += shapePts[i][0];
+        cy += shapePts[i][1];
+      }
+      cx /= shapePts.length;
+      cy /= shapePts.length;
 
       var latPerM = 1 / 111320;
       var lngPerM = 1 / (111320 * Math.cos(startLat * Math.PI / 180));
 
-      var waypoints = shapePts.map(function(p) {
+      var routePoints = shapePts.map(function(p) {
         return {
           lat: startLat + (cy - p[1]) * scaleM * latPerM,
-          lng: startLng + (p[0] - cx) * scaleM * lngPerM,
+          lng: startLng + (p[0] - cx) * scaleM * lngPerM
         };
       });
+      routePoints.push(routePoints[0]);
 
-      // Close loop
-      var wpts = waypoints.concat([waypoints[0]]);
-      var coords = wpts.map(function(w) {
-        return w.lng.toFixed(6) + ',' + w.lat.toFixed(6);
-      }).join(';');
+      drawPolyline(routePoints, startLat, startLng);
 
-      var geojson, distM, durS;
-
-      try {
-        var url = 'https://router.project-osrm.org/route/v1/' + profile + '/' + coords
-          + '?overview=full&geometries=geojson';
-        var res = await fetch(url);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        var data = await res.json();
-        if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('No route');
-        geojson = data.routes[0].geometry;
-        distM = data.routes[0].distance;
-        durS = data.routes[0].duration;
-      } catch(err) {
-        // Fallback: connect waypoints directly
-        geojson = {
-          type: 'LineString',
-          coordinates: wpts.map(function(w) { return [w.lng, w.lat]; }),
-        };
-        distM = targetKm * 1000;
-        durS = null;
-      }
-
-      if (routeLayer) map.removeLayer(routeLayer);
-      routeLayer = L.geoJSON(geojson, {
-        style: {
-          color: '#ef4444',
-          weight: 5,
-          opacity: 0.9,
-          lineCap: 'round',
-          lineJoin: 'round',
-        },
-      }).addTo(map);
-
-      map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
-
-      // Re-place start marker on top
-      if (startMarker) map.removeLayer(startMarker);
-      startMarker = L.marker([startLat, startLng], { icon: startIcon }).addTo(map);
-
-      send({ type: 'ROUTE_DONE', distM: distM, durS: durS });
+      var distM = routeDistanceMeters(routePoints);
+      var durS = Math.round(distM / 1000 * 360);
+      setTimeout(function() {
+        send({ type: 'ROUTE_DONE', distM: distM, durS: durS, routePoints: routePoints });
+      }, 120);
     }
 
-    // Draw a pre-computed route from the backend.
-    // msg: { type: 'DRAW_ROUTE', points: [{lat, lng}], startLat, startLng }
     function drawRoute(msg) {
       var points = msg.points || [];
-      if (!points.length) return;
+      drawPolyline(points, msg.startLat, msg.startLng);
+    }
 
-      var geojson = {
-        type: 'LineString',
-        coordinates: points.map(function(p) { return [p.lng, p.lat]; }),
-      };
+    function updateRunner(location) {
+      if (!location) return;
+      var pos = new naver.maps.LatLng(location.lat, location.lng);
+      setRunnerMarker(pos);
+      map.panTo(pos);
+    }
 
-      if (routeLayer) map.removeLayer(routeLayer);
-      routeLayer = L.geoJSON(geojson, {
-        style: {
-          color: '#ef4444',
-          weight: 5,
-          opacity: 0.9,
-          lineCap: 'round',
-          lineJoin: 'round',
-        },
-      }).addTo(map);
-
-      map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
-
-      if (startMarker) map.removeLayer(startMarker);
-      startMarker = L.marker([msg.startLat, msg.startLng], { icon: startIcon }).addTo(map);
+    function setLocation(lat, lng) {
+      startPosition = { lat: lat, lng: lng };
+      var pos = new naver.maps.LatLng(lat, lng);
+      map.setCenter(pos);
+      setStartMarker(pos);
     }
 
     function handleMessage(e) {
@@ -196,16 +233,40 @@ export const MAP_HTML = `<!DOCTYPE html>
         var msg = JSON.parse(e.data);
         if (msg.type === 'GENERATE') generateRoute(msg);
         else if (msg.type === 'DRAW_ROUTE') drawRoute(msg);
+        else if (msg.type === 'UPDATE_RUNNER') updateRunner(msg.location);
         else if (msg.type === 'SET_LOCATION') setLocation(msg.lat, msg.lng);
         else if (msg.type === 'CLEAR') clearRoute();
-      } catch(err) {}
+      } catch(err) {
+        send({ type: 'ROUTE_ERROR', message: String(err && err.message ? err.message : err) });
+      }
+    }
+
+    function initMap() {
+      if (!window.naver || !naver.maps) {
+        send({ type: 'ROUTE_ERROR', message: 'NAVER Maps SDK failed to load' });
+        return;
+      }
+
+      map = new naver.maps.Map('map', {
+        center: new naver.maps.LatLng(startPosition.lat, startPosition.lng),
+        zoom: 14,
+        scaleControl: false,
+        logoControl: true,
+        mapDataControl: false,
+        zoomControl: false
+      });
+
+      naver.maps.Event.addListener(map, 'click', function(e) {
+        send({ type: 'MAP_CLICK', lat: e.coord.lat(), lng: e.coord.lng() });
+      });
+
+      setStartMarker(new naver.maps.LatLng(startPosition.lat, startPosition.lng));
+      send({ type: 'READY' });
     }
 
     document.addEventListener('message', handleMessage);
     window.addEventListener('message', handleMessage);
-
-    // Signal ready after Leaflet loads
-    setTimeout(function() { send({ type: 'READY' }); }, 400);
-  <\/script>
+    window.addEventListener('load', initMap);
+  </script>
 </body>
 </html>`;
