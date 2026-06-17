@@ -177,62 +177,47 @@ export function RunModeScreen({
           </ScrollView>
         </View>
       ) : (
-        <View style={styles.guidancePanel}>
-          <View style={styles.sheetDragHandleArea} {...sheetPanResponder.panHandlers}>
-            <View style={styles.sheetDragHandle} />
-          </View>
-
-          <ScrollView
-            style={styles.sheetScrollBody}
-            contentContainerStyle={scrollContentStyle}
-            showsVerticalScrollIndicator={false}>
-            <View style={styles.guidanceHeader}>
-              <View>
-                <Text style={styles.guidanceKicker}>안내 중</Text>
-                <Text style={styles.guidanceTitle}>다음 포인트까지 320m</Text>
+        <View style={styles.runningHudLayer}>
+          <View style={styles.runningFloatingCard}>
+            <View style={styles.runningCardTopRow}>
+              <View style={styles.runningInstructionIcon}>
+                <Navigation size={24} color="#fff" strokeWidth={2.8} />
               </View>
-              <View style={styles.guidanceBadge}>
-                <Text style={styles.guidanceBadgeText}>{Math.round(runProgress * 100)}%</Text>
+              <View style={styles.runningInstructionCopy}>
+                <Text style={styles.runningKicker}>안내 중</Text>
+                <Text style={styles.runningTitle}>다음 포인트까지 320m</Text>
+                <Text style={styles.runningSub}>목표 페이스로 직진 후 좌측 라인에 진입하세요</Text>
+              </View>
+              <View style={styles.runningProgressPill}>
+                <Text style={styles.runningProgressText}>{Math.round(runProgress * 100)}%</Text>
               </View>
             </View>
 
-            <View style={styles.guidanceInstruction}>
-              <View style={styles.guidanceInstructionIcon}>
-                <Navigation size={22} color="#fff" strokeWidth={2.7} />
+            <View style={styles.runningStatRow}>
+              <View style={styles.runningStat}>
+                <Text style={styles.runningStatLabel}>이동</Text>
+                <Text style={styles.runningStatValue}>{progressDistance} km</Text>
               </View>
-              <View style={styles.guidanceInstructionTextBox}>
-                <Text style={styles.guidanceInstructionTitle}>{shapePrompt} 라인 유지</Text>
-                <Text style={styles.guidanceInstructionSub}>
-                  목표 페이스로 직진 후 좌측 라인에 진입하세요
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.guidanceStats}>
-              <View style={styles.guidanceStat}>
-                <Text style={styles.guidanceStatLabel}>이동</Text>
-                <Text style={styles.guidanceStatValue}>{progressDistance} km</Text>
-              </View>
-              <View style={styles.guidanceStat}>
-                <Text style={styles.guidanceStatLabel}>페이스</Text>
-                <Text style={styles.guidanceStatValue}>
+              <View style={styles.runningStat}>
+                <Text style={styles.runningStatLabel}>페이스</Text>
+                <Text style={styles.runningStatValue}>
                   {Math.floor(currentPace)}'
                   {Math.round((currentPace % 1) * 60).toString().padStart(2, '0')}"
                 </Text>
               </View>
-              <View style={styles.guidanceStat}>
-                <Text style={styles.guidanceStatLabel}>BPM</Text>
-                <Text style={styles.guidanceStatValue}>{currentBpm}</Text>
+              <View style={styles.runningStat}>
+                <Text style={styles.runningStatLabel}>BPM</Text>
+                <Text style={styles.runningStatValue}>{currentBpm}</Text>
               </View>
             </View>
 
-            <View style={styles.guidanceVoice}>
-              <View style={styles.guidanceVoiceIcon}>
-                <Play size={14} color="#fff" fill="#fff" strokeWidth={2.5} />
+            <View style={styles.runningVoiceCard}>
+              <View style={styles.runningVoiceIcon}>
+                <Play size={13} color="#fff" fill="#fff" strokeWidth={2.5} />
               </View>
-              <Text style={styles.guidanceVoiceText}>{voiceCue}</Text>
+              <Text style={styles.runningVoiceText}>{voiceCue}</Text>
             </View>
-          </ScrollView>
+          </View>
         </View>
       )}
     </View>
