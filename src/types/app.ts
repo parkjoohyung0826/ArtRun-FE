@@ -2,7 +2,7 @@ export type TabKey = 'home' | 'run' | 'community' | 'profile';
 export type Activity = 'Running' | 'Walking' | 'Cycling';
 export type RoutePhase = 'idle' | 'ready' | 'running' | 'complete';
 export type AuthMode = 'login' | 'signup';
-export type CommunityFilter = '전체' | '인기' | '저장' | '근처';
+export type CommunityFilter = '전체' | '인기' | '근처';
 
 export interface Coordinate {
   lat: number;
@@ -34,7 +34,6 @@ export interface SavedRun {
   author?: string;
   location?: string;
   likes?: number;
-  saved?: boolean;
   description?: string;
   tags?: string[];
   startCoord?: Coordinate;

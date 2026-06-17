@@ -5,6 +5,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Heart,
   LogOut,
   Mail,
   MapPinned,
@@ -22,10 +23,12 @@ export function ProfileScreen({
   authName,
   authEmail,
   savedRuns,
+  likedRuns,
   preferences,
   selectedRunId,
   onSelectRun,
   onToggleShare,
+  onRegisterCommunity,
   onChangePreferences,
   onLogout,
   onDeleteAccount,
@@ -33,21 +36,28 @@ export function ProfileScreen({
   authName: string;
   authEmail: string;
   savedRuns: SavedRun[];
+  likedRuns: SavedRun[];
   preferences: Preferences;
   selectedRunId: string | null;
   onSelectRun: (id: string | null) => void;
   onToggleShare: (id: string) => void;
+  onRegisterCommunity: (id: string | null) => void;
   onChangePreferences: (updater: (prev: Preferences) => Preferences) => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
 }) {
   const [showRunList, setShowRunList] = useState(false);
+  const [showLikedList, setShowLikedList] = useState(false);
+  const [selectedLikedRunId, setSelectedLikedRunId] = useState<string | null>(null);
   const sharedCount = savedRuns.filter(run => run.shared).length;
   const totalDistance = savedRuns
     .reduce((sum, run) => sum + parseDistanceKm(run.distance), 0)
     .toFixed(1);
   const selectedRun = selectedRunId
     ? savedRuns.find(run => run.id === selectedRunId)
+    : null;
+  const selectedLikedRun = selectedLikedRunId
+    ? likedRuns.find(run => run.id === selectedLikedRunId)
     : null;
 
   if (selectedRun) {
@@ -118,10 +128,14 @@ export function ProfileScreen({
         <View style={styles.profileDangerCard}>
           <TouchableOpacity
             style={styles.profileLogoutButton}
-            onPress={() => onToggleShare(selectedRun.id)}>
+            onPress={() =>
+              selectedRun.shared
+                ? onToggleShare(selectedRun.id)
+                : onRegisterCommunity(selectedRun.id)
+            }>
             <Bookmark size={18} color="#bfdbfe" strokeWidth={2.4} />
             <Text style={styles.profileLogoutText}>
-              {selectedRun.shared ? '공유 해제' : '커뮤니티에 공유'}
+              {selectedRun.shared ? '커뮤니티 등록 해제' : '커뮤니티에 등록'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -190,6 +204,133 @@ export function ProfileScreen({
     );
   }
 
+  if (showLikedList) {
+    if (selectedLikedRun) {
+      return (
+        <ScrollView
+          style={styles.panelScroll}
+          contentContainerStyle={styles.panelContent}
+          showsVerticalScrollIndicator={false}>
+          <View style={styles.communityDetailHeader}>
+            <TouchableOpacity
+              style={styles.communityBackButton}
+              onPress={() => setSelectedLikedRunId(null)}
+              activeOpacity={0.78}>
+              <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
+            </TouchableOpacity>
+            <View style={styles.communityDetailHeaderText}>
+              <Text style={styles.communityDetailKicker}>LIKED ROUTE</Text>
+              <Text style={styles.communityDetailTitle}>{selectedLikedRun.shape} 루트</Text>
+            </View>
+          </View>
+
+          <View style={styles.profileRunDetailHero}>
+            <View style={styles.profileLikedEntryIcon}>
+              <Heart size={28} color="#fff" fill="#fff" strokeWidth={2.6} />
+            </View>
+            <Text style={styles.profileRunDetailTitle}>{selectedLikedRun.shape} 루트</Text>
+            <Text style={styles.profileRunDetailSub}>
+              {selectedLikedRun.author || '커뮤니티 러너'}의 러닝 아트 루트입니다.
+            </Text>
+          </View>
+
+          <View style={styles.communityDetailSummary}>
+            <View style={styles.communityDetailMetric}>
+              <Text style={styles.communityDetailMetricLabel}>거리</Text>
+              <Text style={styles.communityDetailMetricValue}>{selectedLikedRun.distance}</Text>
+            </View>
+            <View style={styles.communityDetailMetric}>
+              <Text style={styles.communityDetailMetricLabel}>페이스</Text>
+              <Text style={styles.communityDetailMetricValue}>{selectedLikedRun.pace}</Text>
+            </View>
+            <View style={styles.communityDetailMetric}>
+              <Text style={styles.communityDetailMetricLabel}>일치율</Text>
+              <Text style={styles.communityDetailMetricValue}>{selectedLikedRun.matchPct}%</Text>
+            </View>
+          </View>
+
+          <View style={styles.communityDetailSection}>
+            <Text style={styles.communityDetailSectionTitle}>루트 설명</Text>
+            <Text style={styles.communityDetailText}>
+              {selectedLikedRun.description ||
+                '좋아요한 커뮤니티 러닝 루트입니다. 공유 탭에서 이 루트로 다시 달릴 수 있습니다.'}
+            </Text>
+            <View style={styles.communityTags}>
+              {(selectedLikedRun.tags || ['좋아요', '커뮤니티']).map(tag => (
+                <View key={tag} style={styles.communityTag}>
+                  <Text style={styles.communityTagText}>{tag}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+      );
+    }
+
+    return (
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={styles.panelContent}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.communityDetailHeader}>
+          <TouchableOpacity
+            style={styles.communityBackButton}
+            onPress={() => {
+              setSelectedLikedRunId(null);
+              setShowLikedList(false);
+            }}
+            activeOpacity={0.78}>
+            <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
+          </TouchableOpacity>
+          <View style={styles.communityDetailHeaderText}>
+            <Text style={styles.communityDetailKicker}>LIKED ROUTES</Text>
+            <Text style={styles.communityDetailTitle}>좋아요한 러닝 루트</Text>
+          </View>
+        </View>
+
+        <View style={styles.profileRunListSummary}>
+          <View style={styles.profileLikedListIcon}>
+            <Heart size={24} color="#fff" fill="#fff" strokeWidth={2.6} />
+          </View>
+          <View style={styles.profileHeaderCopy}>
+            <Text style={styles.profileRunListTitle}>{likedRuns.length}개의 좋아요</Text>
+            <Text style={styles.profileRunListSub}>
+              커뮤니티에서 마음에 든 루트를 모아봅니다.
+            </Text>
+          </View>
+        </View>
+
+        {likedRuns.map(run => (
+          <TouchableOpacity
+            key={run.id}
+            style={styles.profileRunRecordCard}
+            onPress={() => setSelectedLikedRunId(run.id)}
+            activeOpacity={0.82}>
+            <View style={styles.profileLikedBadge}>
+              <Heart size={18} color="#fff" fill="#fff" strokeWidth={2.4} />
+            </View>
+            <View style={styles.runCardBody}>
+              <Text style={styles.runCardTitle}>{run.shape} 루트</Text>
+              <Text style={styles.runCardSub}>
+                {run.location || '커뮤니티 루트'} · {run.distance} · {run.pace}
+              </Text>
+            </View>
+            <View style={[styles.profileRunSharePill, styles.profileRunSharePillActive]}>
+              <Text style={styles.profileRunShareTextActive}>좋아요</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {likedRuns.length === 0 && (
+          <View style={styles.communityEmptyBox}>
+            <Text style={styles.communityEmptyTitle}>아직 좋아요한 루트가 없습니다</Text>
+            <Text style={styles.communityEmptyText}>공유 탭에서 마음에 드는 루트에 좋아요를 눌러보세요.</Text>
+          </View>
+        )}
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.panelScroll}
@@ -246,6 +387,30 @@ export function ProfileScreen({
           <View style={styles.profileRunEntryMetaRow}>
             <Text style={styles.profileRunEntryMeta}>
               최근 {savedRuns[0]?.shape || '러닝'} · {savedRuns[0]?.distance || '0 km'}
+            </Text>
+          </View>
+        </View>
+        <ChevronRight size={22} color="#8AA0BC" strokeWidth={2.6} />
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.profileLikedEntryCard}
+        onPress={() => {
+          setSelectedLikedRunId(null);
+          setShowLikedList(true);
+        }}
+        activeOpacity={0.82}>
+        <View style={styles.profileLikedEntryIcon}>
+          <Heart size={23} color="#fff" fill="#fff" strokeWidth={2.5} />
+        </View>
+        <View style={styles.profileHeaderCopy}>
+          <Text style={styles.profileRunEntryTitle}>좋아요한 러닝 루트</Text>
+          <Text style={styles.profileRunEntrySub}>
+            {likedRuns.length}개 루트 · 공유 탭에서 누른 좋아요
+          </Text>
+          <View style={styles.profileLikedMetaRow}>
+            <Text style={styles.profileLikedMeta}>
+              {likedRuns[0] ? `최근 ${likedRuns[0].shape} · ${likedRuns[0].distance}` : '아직 좋아요한 루트 없음'}
             </Text>
           </View>
         </View>

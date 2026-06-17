@@ -27,7 +27,10 @@ export function RunModeScreen({
   elapsedTimeLabel,
   shareMapImageUrl,
   shareCardSaved,
+  completedRunId,
+  completedRunShared,
   onSaveShareCard,
+  onRegisterCommunity,
   onGoHome,
   onNewRun,
 }: {
@@ -46,7 +49,10 @@ export function RunModeScreen({
   elapsedTimeLabel: string;
   shareMapImageUrl: string | null;
   shareCardSaved: boolean;
+  completedRunId: string | null;
+  completedRunShared: boolean;
   onSaveShareCard: () => void;
+  onRegisterCommunity: (id: string | null) => void;
   onGoHome: () => void;
   onNewRun: () => void;
 }) {
@@ -174,6 +180,19 @@ export function RunModeScreen({
                 <Text style={styles.primaryButtonText}>새 루트 만들기</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={[
+                styles.communityRegisterButton,
+                completedRunShared && styles.communityRegisterButtonDone,
+              ]}
+              onPress={() => onRegisterCommunity(completedRunId)}
+              activeOpacity={0.84}>
+              <Map size={18} color="#fff" strokeWidth={2.5} />
+              <Text style={styles.communityRegisterButtonText}>
+                {completedRunShared ? '커뮤니티 등록 완료' : '이 루트 커뮤니티에 등록'}
+              </Text>
+            </TouchableOpacity>
           </ScrollView>
         </View>
       ) : (

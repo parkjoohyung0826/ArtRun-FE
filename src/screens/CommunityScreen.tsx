@@ -1,7 +1,6 @@
 import React from 'react';
 import {Image, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {
-  Bookmark,
   ChevronLeft,
   Heart,
   MapPin,
@@ -28,7 +27,7 @@ export function CommunityScreen({
   onUseRoute,
 }: {
   savedRuns: SavedRun[];
-  communityActions: Record<string, {liked: boolean; saved: boolean}>;
+  communityActions: Record<string, {liked: boolean}>;
   selectedCommunityId: string | null;
   communityQuery: string;
   communityFilter: CommunityFilter;
@@ -36,7 +35,7 @@ export function CommunityScreen({
   onSelectCommunityId: (id: string | null) => void;
   onChangeQuery: (query: string) => void;
   onChangeFilter: (filter: CommunityFilter) => void;
-  onToggleAction: (id: string, key: 'liked' | 'saved') => void;
+  onToggleAction: (id: string) => void;
   onUseRoute: (run: SavedRun) => void;
 }) {
   const runs = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
@@ -52,10 +51,6 @@ export function CommunityScreen({
   const detailIndex = detailRun ? Math.max(0, runs.findIndex(run => run.id === detailRun.id)) : 0;
   const normalizedQuery = communityQuery.trim().toLowerCase();
   const filteredRuns = runs.filter(run => {
-    const actions = communityActions[run.id] || {
-      liked: false,
-      saved: Boolean(run.saved),
-    };
     const routeStart = run.startCoord || startCoord;
     const startDistance = distanceBetweenCoords(startCoord, routeStart);
     const searchText = [run.shape, run.location, run.author, run.description, ...(run.tags || [])]
@@ -66,17 +61,13 @@ export function CommunityScreen({
     const matchesFilter =
       communityFilter === '전체' ||
       (communityFilter === '인기' && (run.likes || 0) >= 1000) ||
-      (communityFilter === '저장' && actions.saved) ||
       (communityFilter === '근처' && startDistance <= 1.2);
 
     return matchesQuery && matchesFilter;
   });
 
   if (detailRun) {
-    const actions = communityActions[detailRun.id] || {
-      liked: false,
-      saved: Boolean(detailRun.saved),
-    };
+    const actions = communityActions[detailRun.id] || {liked: false};
     const routeStart = detailRun.startCoord || startCoord;
     const startDistance = distanceBetweenCoords(startCoord, routeStart);
     const isNearStart = startDistance <= 1.2;
@@ -180,7 +171,7 @@ export function CommunityScreen({
         <View style={styles.communityDetailActions}>
           <TouchableOpacity
             style={styles.communityDetailIconAction}
-            onPress={() => onToggleAction(detailRun.id, 'liked')}
+            onPress={() => onToggleAction(detailRun.id)}
             activeOpacity={0.75}>
             <Heart
               size={19}
@@ -189,18 +180,6 @@ export function CommunityScreen({
               strokeWidth={2.4}
             />
             <Text style={styles.communityDetailIconActionText}>좋아요</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.communityDetailIconAction}
-            onPress={() => onToggleAction(detailRun.id, 'saved')}
-            activeOpacity={0.75}>
-            <Bookmark
-              size={19}
-              color={actions.saved ? '#38bdf8' : '#94a3b8'}
-              fill={actions.saved ? '#38bdf8' : 'transparent'}
-              strokeWidth={2.4}
-            />
-            <Text style={styles.communityDetailIconActionText}>저장</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.communityDetailRunAction}
@@ -256,10 +235,7 @@ export function CommunityScreen({
       </View>
 
       {filteredRuns.map((run, index) => {
-        const actions = communityActions[run.id] || {
-          liked: false,
-          saved: Boolean(run.saved),
-        };
+        const actions = communityActions[run.id] || {liked: false};
         const likes = (run.likes || 320) + (actions.liked ? 1 : 0);
         const routeStart = run.startCoord || startCoord;
         const startDistance = distanceBetweenCoords(startCoord, routeStart);
@@ -322,23 +298,12 @@ export function CommunityScreen({
               <View style={styles.communityActionRow}>
                 <TouchableOpacity
                   style={styles.communityIconButton}
-                  onPress={() => onToggleAction(run.id, 'liked')}
+                  onPress={() => onToggleAction(run.id)}
                   activeOpacity={0.75}>
                   <Heart
                     size={18}
                     color={actions.liked ? '#38bdf8' : '#94a3b8'}
                     fill={actions.liked ? '#38bdf8' : 'transparent'}
-                    strokeWidth={2.4}
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.communityIconButton}
-                  onPress={() => onToggleAction(run.id, 'saved')}
-                  activeOpacity={0.75}>
-                  <Bookmark
-                    size={18}
-                    color={actions.saved ? '#38bdf8' : '#94a3b8'}
-                    fill={actions.saved ? '#38bdf8' : 'transparent'}
                     strokeWidth={2.4}
                   />
                 </TouchableOpacity>

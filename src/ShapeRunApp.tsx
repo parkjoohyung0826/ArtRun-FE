@@ -22,6 +22,7 @@ import {NAVER_MAP_WEB_BASE_URL} from './config';
 import {FooterItem} from './components/AppChrome';
 import {
   ACTIVITY_PROFILES,
+  COMMUNITY_RUNS,
   INITIAL_RUNS,
 } from './constants/appData';
 import {styles} from './styles/appStyles';
@@ -84,11 +85,12 @@ export default function ShapeRunApp() {
   const [pendingQuickGenerate, setPendingQuickGenerate] = useState(false);
   const [sheetSnap, setSheetSnap] = useState<SheetSnap>('collapsed');
   const [shareCardSaved, setShareCardSaved] = useState(false);
+  const [lastCompletedRunId, setLastCompletedRunId] = useState<string | null>(null);
   const [selectedCommunityId, setSelectedCommunityId] = useState<string | null>(null);
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityFilter, setCommunityFilter] = useState<CommunityFilter>('전체');
   const [communityActions, setCommunityActions] = useState<
-    Record<string, {liked: boolean; saved: boolean}>
+    Record<string, {liked: boolean}>
   >({});
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -141,9 +143,11 @@ export default function ShapeRunApp() {
     if (runTimer.current) clearInterval(runTimer.current);
     setRoutePhase('complete');
     setVoiceCue('러닝을 완료했습니다. 루트 완주 기록이 저장되었습니다.');
+    const completedRunId = `r${Date.now()}`;
+    setLastCompletedRunId(completedRunId);
     setSavedRuns(prev => {
       const newRun: SavedRun = {
-        id: `r${Date.now()}`,
+        id: completedRunId,
         shape: shapeNameFromKey(selectedShape, shapePrompt),
         distance: `${distance.toFixed(1)} km`,
         pace: `${Math.floor(targetPace)}'${Math.round((targetPace % 1) * 60)
@@ -151,10 +155,16 @@ export default function ShapeRunApp() {
           .padStart(2, '0')}"`,
         matchPct: routeStats?.matchPct || 92,
         shared: false,
+        author: authName,
+        location: '내 완주 루트',
+        likes: 0,
+        description: `${shapeNameFromKey(selectedShape, shapePrompt)} 모양으로 완주한 ${distance.toFixed(1)}km 러닝 아트 루트입니다.`,
+        tags: ['완주 인증', '내 기록', shapeNameFromKey(selectedShape, shapePrompt)],
+        startCoord,
       };
       return [newRun, ...prev];
     });
-  }, [distance, routeStats?.matchPct, selectedShape, shapePrompt, targetPace]);
+  }, [authName, distance, routeStats?.matchPct, selectedShape, shapePrompt, startCoord, targetPace]);
 
   useEffect(() => {
     if (routePhase !== 'running') return;
@@ -220,6 +230,10 @@ export default function ShapeRunApp() {
     () => createNaverStaticRouteMapUrl(routeStats?.routePoints || []),
     [routeStats?.routePoints],
   );
+  const likedCommunityRuns = useMemo(() => {
+    const communityRuns = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
+    return communityRuns.filter(run => communityActions[run.id]?.liked);
+  }, [communityActions, savedRuns]);
 
   const animateSheetTo = useCallback(
     (toValue: number) => {
@@ -375,6 +389,7 @@ export default function ShapeRunApp() {
     setSheetSnap('expanded');
     setRunProgress(0);
     setShareCardSaved(false);
+    setLastCompletedRunId(null);
     setCurrentPace(targetPace);
     setCurrentBpm(156);
     setVoiceCue(`${routeStats.shapeLabel} 러닝을 시작합니다. 첫 구간은 목표 페이스로 진입하세요.`);
@@ -385,6 +400,7 @@ export default function ShapeRunApp() {
     setRouteStats(null);
     setRunProgress(0);
     setShareCardSaved(false);
+    setLastCompletedRunId(null);
     setVoiceCue('새 러닝 루트를 생성할 준비가 되었습니다.');
   }, []);
 
@@ -414,14 +430,33 @@ export default function ShapeRunApp() {
     );
   }, []);
 
-  const toggleCommunityAction = useCallback((id: string, key: 'liked' | 'saved') => {
+  const handleRegisterCompletedRun = useCallback((id: string | null) => {
+    if (!id) {
+      Alert.alert('등록 불가', '완주 기록이 저장된 뒤 커뮤니티에 등록할 수 있습니다.');
+      return;
+    }
+
+    const targetRun = savedRuns.find(run => run.id === id);
+    if (!targetRun) {
+      Alert.alert('등록 불가', '저장된 완주 기록을 찾을 수 없습니다.');
+      return;
+    }
+
+    setSavedRuns(prev =>
+      prev.map(run => (run.id === id ? {...run, shared: true} : run)),
+    );
+    Alert.alert('커뮤니티 등록 완료', `${targetRun.shape} 루트가 커뮤니티에 등록되었습니다.`);
+    setActiveTab('community');
+    setSelectedCommunityId(id);
+  }, [savedRuns]);
+
+  const toggleCommunityAction = useCallback((id: string) => {
     setCommunityActions(prev => {
-      const current = prev[id] || {liked: false, saved: false};
+      const current = prev[id] || {liked: false};
       return {
         ...prev,
         [id]: {
-          ...current,
-          [key]: !current[key],
+          liked: !current.liked,
         },
       };
     });
@@ -596,7 +631,10 @@ export default function ShapeRunApp() {
       elapsedTimeLabel={elapsedTimeLabel}
       shareMapImageUrl={shareMapImageUrl}
       shareCardSaved={shareCardSaved}
+      completedRunId={lastCompletedRunId}
+      completedRunShared={savedRuns.some(run => run.id === lastCompletedRunId && run.shared)}
       onSaveShareCard={handleSaveShareCard}
+      onRegisterCommunity={handleRegisterCompletedRun}
       onGoHome={() => setActiveTab('home')}
       onNewRun={handleNewRun}
     />
@@ -637,10 +675,12 @@ export default function ShapeRunApp() {
       authName={authName}
       authEmail={authEmail}
       savedRuns={savedRuns}
+      likedRuns={likedCommunityRuns}
       preferences={preferences}
       selectedRunId={selectedProfileRunId}
       onSelectRun={setSelectedProfileRunId}
       onToggleShare={toggleShare}
+      onRegisterCommunity={handleRegisterCompletedRun}
       onChangePreferences={setPreferences}
       onLogout={handleLogout}
       onDeleteAccount={handleDeleteAccount}
@@ -703,9 +743,6 @@ export default function ShapeRunApp() {
                     <Text style={styles.navigationBannerTitle}>320m 앞 포인트 통과</Text>
                     <Text style={styles.navigationBannerSub}>별 모양 상단 라인을 따라가세요</Text>
                   </View>
-                </View>
-                <View style={styles.navigationPacePill}>
-                  <Text style={styles.navigationPaceText}>{currentBpm} BPM</Text>
                 </View>
               </>
             ) : null}
