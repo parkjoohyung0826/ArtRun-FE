@@ -1,9 +1,10 @@
-import React from 'react';
+import React, {useState} from 'react';
 import {ScrollView, Text, TouchableOpacity, View} from 'react-native';
 import {
   Bookmark,
   Check,
   ChevronLeft,
+  ChevronRight,
   LogOut,
   Mail,
   MapPinned,
@@ -40,6 +41,7 @@ export function ProfileScreen({
   onLogout: () => void;
   onDeleteAccount: () => void;
 }) {
+  const [showRunList, setShowRunList] = useState(false);
   const sharedCount = savedRuns.filter(run => run.shared).length;
   const totalDistance = savedRuns
     .reduce((sum, run) => sum + parseDistanceKm(run.distance), 0)
@@ -57,7 +59,10 @@ export function ProfileScreen({
         <View style={styles.communityDetailHeader}>
           <TouchableOpacity
             style={styles.communityBackButton}
-            onPress={() => onSelectRun(null)}
+            onPress={() => {
+              onSelectRun(null);
+              setShowRunList(true);
+            }}
             activeOpacity={0.78}>
             <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
           </TouchableOpacity>
@@ -124,6 +129,67 @@ export function ProfileScreen({
     );
   }
 
+  if (showRunList) {
+    return (
+      <ScrollView
+        style={styles.panelScroll}
+        contentContainerStyle={styles.panelContent}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.communityDetailHeader}>
+          <TouchableOpacity
+            style={styles.communityBackButton}
+            onPress={() => setShowRunList(false)}
+            activeOpacity={0.78}>
+            <ChevronLeft size={22} color="#f8fafc" strokeWidth={2.8} />
+          </TouchableOpacity>
+          <View style={styles.communityDetailHeaderText}>
+            <Text style={styles.communityDetailKicker}>MY RUNS</Text>
+            <Text style={styles.communityDetailTitle}>내 완주 기록</Text>
+          </View>
+        </View>
+
+        <View style={styles.profileRunListSummary}>
+          <View style={styles.profileRunListIcon}>
+            <Trophy size={24} color="#fff" strokeWidth={2.6} />
+          </View>
+          <View style={styles.profileHeaderCopy}>
+            <Text style={styles.profileRunListTitle}>{savedRuns.length}개의 완주 기록</Text>
+            <Text style={styles.profileRunListSub}>
+              누적 {totalDistance} km · 공유 루트 {sharedCount}개
+            </Text>
+          </View>
+        </View>
+
+        {savedRuns.map(run => (
+          <TouchableOpacity
+            key={run.id}
+            style={styles.profileRunRecordCard}
+            onPress={() => onSelectRun(run.id)}
+            activeOpacity={0.82}>
+            <View style={styles.runBadge}>
+              <Text style={styles.runBadgeText}>{run.shape.slice(0, 1)}</Text>
+            </View>
+            <View style={styles.runCardBody}>
+              <Text style={styles.runCardTitle}>{run.shape} 루트</Text>
+              <Text style={styles.runCardSub}>
+                {run.distance} · {run.pace} · 일치율 {run.matchPct}%
+              </Text>
+            </View>
+            <View style={[styles.profileRunSharePill, run.shared && styles.profileRunSharePillActive]}>
+              <Text
+                style={[
+                  styles.profileRunShareText,
+                  run.shared && styles.profileRunShareTextActive,
+                ]}>
+                {run.shared ? '공유됨' : '개인'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.panelScroll}
@@ -165,21 +231,26 @@ export function ProfileScreen({
         </View>
       </View>
 
-      <View style={styles.profileAccountCard}>
-        <Text style={styles.profileSectionTitle}>러닝 리포트</Text>
-        <View style={styles.profileReportGrid}>
-          <View style={styles.profileReportItem}>
-            <RouteIcon size={20} color="#38bdf8" strokeWidth={2.4} />
-            <Text style={styles.profileReportValue}>{totalDistance} km</Text>
-            <Text style={styles.profileReportLabel}>누적 거리</Text>
-          </View>
-          <View style={styles.profileReportItem}>
-            <Trophy size={20} color="#38bdf8" strokeWidth={2.4} />
-            <Text style={styles.profileReportValue}>{savedRuns.length}</Text>
-            <Text style={styles.profileReportLabel}>완주 기록</Text>
+      <TouchableOpacity
+        style={styles.profileRunEntryCard}
+        onPress={() => setShowRunList(true)}
+        activeOpacity={0.82}>
+        <View style={styles.profileRunEntryIcon}>
+          <Trophy size={24} color="#fff" strokeWidth={2.6} />
+        </View>
+        <View style={styles.profileHeaderCopy}>
+          <Text style={styles.profileRunEntryTitle}>내 완주 기록</Text>
+          <Text style={styles.profileRunEntrySub}>
+            {savedRuns.length}개 기록 · 누적 {totalDistance} km · 공유 {sharedCount}개
+          </Text>
+          <View style={styles.profileRunEntryMetaRow}>
+            <Text style={styles.profileRunEntryMeta}>
+              최근 {savedRuns[0]?.shape || '러닝'} · {savedRuns[0]?.distance || '0 km'}
+            </Text>
           </View>
         </View>
-      </View>
+        <ChevronRight size={22} color="#8AA0BC" strokeWidth={2.6} />
+      </TouchableOpacity>
 
       <View style={styles.profileAccountCard}>
         <Text style={styles.profileSectionTitle}>러닝 설정</Text>
@@ -196,34 +267,6 @@ export function ProfileScreen({
           onValueChange={value => onChangePreferences(prev => ({...prev, voiceCoach: value}))}
         />
       </View>
-
-      <Text style={styles.listTitle}>내 완주 기록</Text>
-      {savedRuns.map(run => (
-        <TouchableOpacity
-          key={run.id}
-          style={styles.profileRunRecordCard}
-          onPress={() => onSelectRun(run.id)}
-          activeOpacity={0.82}>
-          <View style={styles.runBadge}>
-            <Text style={styles.runBadgeText}>{run.shape.slice(0, 1)}</Text>
-          </View>
-          <View style={styles.runCardBody}>
-            <Text style={styles.runCardTitle}>{run.shape} 루트</Text>
-            <Text style={styles.runCardSub}>
-              {run.distance} · {run.pace} · 일치율 {run.matchPct}%
-            </Text>
-          </View>
-          <View style={[styles.profileRunSharePill, run.shared && styles.profileRunSharePillActive]}>
-            <Text
-              style={[
-                styles.profileRunShareText,
-                run.shared && styles.profileRunShareTextActive,
-              ]}>
-              {run.shared ? '공유됨' : '개인'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      ))}
 
       <View style={styles.profileDangerCard}>
         <TouchableOpacity style={styles.profileLogoutButton} onPress={onLogout}>
