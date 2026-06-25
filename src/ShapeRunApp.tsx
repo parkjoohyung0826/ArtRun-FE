@@ -148,7 +148,6 @@ export default function ShapeRunApp() {
       }}
       onSelectDistance={run.setDistance}
       onQuickGenerate={run.handleQuickGenerate}
-      onOpenRun={() => setActiveTab('run')}
       onOpenCommunity={() => setActiveTab('community')}
     />
   );

@@ -1,5 +1,5 @@
-import React from 'react';
-import {Image, ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import React, {useRef} from 'react';
+import {ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {
   ChevronLeft,
   Heart,
@@ -8,10 +8,15 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react-native';
-import {COMMUNITY_FILTERS, ROUTE_IMAGES} from '../constants/appData';
+import WebView, {type WebViewMessageEvent} from 'react-native-webview';
+import {NAVER_MAP_WEB_BASE_URL} from '../config';
+import {COMMUNITY_FILTERS} from '../constants/appData';
+import {MAP_HTML} from '../mapHtml';
+import {SHAPES} from '../shapes';
 import {styles} from '../styles/appStyles';
 import type {CommunityFilter, Coordinate, SavedRun} from '../types/app';
-import {distanceBetweenCoords} from '../utils/geo';
+import {distanceBetweenCoords, parseDistanceKm} from '../utils/geo';
+import {inferPresetFromPrompt} from '../utils/routeFormat';
 
 export function CommunityScreen({
   communityRuns,
@@ -42,17 +47,11 @@ export function CommunityScreen({
   onToggleAction: (id: string) => void;
   onUseRoute: (run: SavedRun) => void;
 }) {
+  const detailMapRef = useRef<WebView>(null);
   const runs = communityRuns;
-  const routeImages = [
-    ROUTE_IMAGES.seoulForest,
-    ROUTE_IMAGES.hangang,
-    ROUTE_IMAGES.lake,
-    ROUTE_IMAGES.cityPark,
-  ];
   const detailRun = selectedCommunityId
     ? runs.find(run => run.id === selectedCommunityId)
     : null;
-  const detailIndex = detailRun ? Math.max(0, runs.findIndex(run => run.id === detailRun.id)) : 0;
   const normalizedQuery = communityQuery.trim().toLowerCase();
   const filteredRuns = runs.filter(run => {
     const routeStart = run.startCoord || startCoord;
@@ -76,7 +75,42 @@ export function CommunityScreen({
     const startDistance = distanceBetweenCoords(startCoord, routeStart);
     const isNearStart = startDistance <= 1.2;
     const likes = (detailRun.likes || 320) + (actions.liked ? 1 : 0);
-    const imageUri = detailRun.imageUrl || routeImages[detailIndex % routeImages.length];
+    const detailRoutePoints = detailRun.routePoints || [];
+    const drawDetailRoute = () => {
+      if (!detailRoutePoints.length) {
+        const shapeKey = inferPresetFromPrompt(detailRun.shape);
+        detailMapRef.current?.postMessage(
+          JSON.stringify({
+            type: 'GENERATE',
+            shapePts: SHAPES[shapeKey]?.points || SHAPES.circle.points,
+            targetKm: parseDistanceKm(detailRun.distance),
+            startLat: routeStart.lat,
+            startLng: routeStart.lng,
+          }),
+        );
+        return;
+      }
+
+      detailMapRef.current?.postMessage(
+        JSON.stringify({
+          type: 'DRAW_ROUTE',
+          points: detailRoutePoints,
+          startLat: routeStart.lat,
+          startLng: routeStart.lng,
+        }),
+      );
+    };
+    const handleDetailMapMessage = (event: WebViewMessageEvent) => {
+      try {
+        const msg = JSON.parse(event.nativeEvent.data);
+        if (msg.type === 'READY') {
+          detailMapRef.current?.postMessage(
+            JSON.stringify({type: 'SET_LOCATION', lat: routeStart.lat, lng: routeStart.lng}),
+          );
+          drawDetailRoute();
+        }
+      } catch {}
+    };
 
     return (
       <ScrollView
@@ -96,12 +130,10 @@ export function CommunityScreen({
           </View>
         </View>
 
-        <View style={styles.communityDetailMapCard}>
-          <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
-          <View style={styles.previewScrim} />
-          <View style={styles.communityDetailMapTop}>
+        <View style={styles.communityDetailInfoCard}>
+          <View style={styles.communityInfoMetaRow}>
             <View style={styles.communityLocationPill}>
-              <MapPin size={13} color="#fff" strokeWidth={2.5} />
+              <MapPin size={13} color="#5ECBFA" strokeWidth={2.5} />
               <Text style={styles.communityLocationPillText}>
                 {detailRun.location || '내 공유 루트'}
               </Text>
@@ -121,12 +153,25 @@ export function CommunityScreen({
               </Text>
             </View>
           </View>
-          <View style={styles.communityDetailMapBottom}>
-            <Text style={styles.communityDetailMapTitle}>전체 루트 지도</Text>
-            <Text style={styles.communityDetailMapSub}>
-              시작점 기준으로 루트를 불러와 러닝 탭에서 실제 경로를 생성합니다.
-            </Text>
-          </View>
+          <Text style={styles.communityDetailMapTitle}>공유 루트 실행 준비</Text>
+          <Text style={styles.communityDetailMapSub}>
+            아래 지도에서 공유된 러닝 루트를 먼저 확인하고 바로 실행할 수 있습니다.
+          </Text>
+        </View>
+
+        <View style={styles.communityDetailRouteMapCard}>
+          <WebView
+            key={detailRun.id}
+            ref={detailMapRef}
+            source={{html: MAP_HTML, baseUrl: NAVER_MAP_WEB_BASE_URL}}
+            style={styles.communityDetailRouteMapWebView}
+            onMessage={handleDetailMapMessage}
+            javaScriptEnabled
+            domStorageEnabled
+            originWhitelist={['*']}
+            mixedContentMode="compatibility"
+            allowsInlineMediaPlayback
+          />
         </View>
 
         <View style={styles.communityDetailSummary}>
@@ -238,13 +283,12 @@ export function CommunityScreen({
         </ScrollView>
       </View>
 
-      {filteredRuns.map((run, index) => {
+      {filteredRuns.map(run => {
         const actions = {liked: communityActions[run.id]?.liked ?? run.liked ?? false};
         const likes = (run.likes || 320) + (actions.liked ? 1 : 0);
         const routeStart = run.startCoord || startCoord;
         const startDistance = distanceBetweenCoords(startCoord, routeStart);
         const isNearStart = startDistance <= 1.2;
-        const imageUri = run.imageUrl || routeImages[index % routeImages.length];
 
         return (
           <TouchableOpacity
@@ -252,30 +296,26 @@ export function CommunityScreen({
             style={styles.communityRouteCard}
             onPress={() => onSelectCommunityId(run.id)}
             activeOpacity={0.86}>
-            <View style={styles.communityRouteImageBox}>
-              <Image source={{uri: imageUri}} style={styles.previewImage} resizeMode="cover" />
-              <View style={styles.previewScrim} />
-              <View style={styles.communityImageTopRow}>
-                <View style={styles.communityLocationPill}>
-                  <MapPin size={13} color="#fff" strokeWidth={2.5} />
-                  <Text style={styles.communityLocationPillText}>
-                    {run.location || '내 공유 루트'}
-                  </Text>
-                </View>
-                <View style={[styles.communityStartBadge, isNearStart && styles.communityStartBadgeOk]}>
-                  <ShieldCheck
-                    size={13}
-                    color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
-                    strokeWidth={2.6}
-                  />
-                  <Text
-                    style={[
-                      styles.communityStartBadgeText,
-                      isNearStart && styles.communityStartBadgeTextOk,
-                    ]}>
-                    {isNearStart ? '시작 가능' : `${startDistance.toFixed(1)}km`}
-                  </Text>
-                </View>
+            <View style={styles.communityInfoMetaRow}>
+              <View style={styles.communityLocationPill}>
+                <MapPin size={13} color="#5ECBFA" strokeWidth={2.5} />
+                <Text style={styles.communityLocationPillText}>
+                  {run.location || '내 공유 루트'}
+                </Text>
+              </View>
+              <View style={[styles.communityStartBadge, isNearStart && styles.communityStartBadgeOk]}>
+                <ShieldCheck
+                  size={13}
+                  color={isNearStart ? '#bbf7d0' : '#bfdbfe'}
+                  strokeWidth={2.6}
+                />
+                <Text
+                  style={[
+                    styles.communityStartBadgeText,
+                    isNearStart && styles.communityStartBadgeTextOk,
+                  ]}>
+                  {isNearStart ? '시작 가능' : `${startDistance.toFixed(1)}km`}
+                </Text>
               </View>
             </View>
 

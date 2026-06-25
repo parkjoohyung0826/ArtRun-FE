@@ -44,7 +44,7 @@ export function useAuthProfile({
   const [serverLikedRuns, setServerLikedRuns] = useState<SavedRun[]>([]);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [authName, setAuthName] = useState('Art Runner');
-  const [authEmail, setAuthEmail] = useState('runner@artrun.app');
+  const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
 
   const resetProfileState = useCallback(() => {
