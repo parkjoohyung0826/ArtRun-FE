@@ -390,6 +390,26 @@ export const communityStyles = {
       fontSize: 12,
       fontWeight: '800',
     },
+  communityStatusBox: {
+      borderRadius: 14,
+      backgroundColor: SURFACE_2,
+      borderWidth: 1,
+      borderColor: LINE,
+      padding: 14,
+      marginBottom: 12,
+    },
+  communityStatusTitle: {
+      color: TEXT,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+  communityStatusText: {
+      color: TEXT_MUTED,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      marginTop: 5,
+    },
   communityEmptyBox: {
       minHeight: 120,
       borderRadius: 16,

@@ -8,14 +8,16 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react-native';
-import {COMMUNITY_FILTERS, COMMUNITY_RUNS, ROUTE_IMAGES} from '../constants/appData';
+import {COMMUNITY_FILTERS, ROUTE_IMAGES} from '../constants/appData';
 import {styles} from '../styles/appStyles';
 import type {CommunityFilter, Coordinate, SavedRun} from '../types/app';
 import {distanceBetweenCoords} from '../utils/geo';
 
 export function CommunityScreen({
-  savedRuns,
+  communityRuns,
   communityActions,
+  communityError,
+  isCommunityLoading,
   selectedCommunityId,
   communityQuery,
   communityFilter,
@@ -26,8 +28,10 @@ export function CommunityScreen({
   onToggleAction,
   onUseRoute,
 }: {
-  savedRuns: SavedRun[];
+  communityRuns: SavedRun[];
   communityActions: Record<string, {liked: boolean}>;
+  communityError: string | null;
+  isCommunityLoading: boolean;
   selectedCommunityId: string | null;
   communityQuery: string;
   communityFilter: CommunityFilter;
@@ -38,7 +42,7 @@ export function CommunityScreen({
   onToggleAction: (id: string) => void;
   onUseRoute: (run: SavedRun) => void;
 }) {
-  const runs = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
+  const runs = communityRuns;
   const routeImages = [
     ROUTE_IMAGES.seoulForest,
     ROUTE_IMAGES.hangang,
@@ -67,12 +71,12 @@ export function CommunityScreen({
   });
 
   if (detailRun) {
-    const actions = communityActions[detailRun.id] || {liked: false};
+    const actions = {liked: communityActions[detailRun.id]?.liked ?? detailRun.liked ?? false};
     const routeStart = detailRun.startCoord || startCoord;
     const startDistance = distanceBetweenCoords(startCoord, routeStart);
     const isNearStart = startDistance <= 1.2;
     const likes = (detailRun.likes || 320) + (actions.liked ? 1 : 0);
-    const imageUri = routeImages[detailIndex % routeImages.length];
+    const imageUri = detailRun.imageUrl || routeImages[detailIndex % routeImages.length];
 
     return (
       <ScrollView
@@ -235,12 +239,12 @@ export function CommunityScreen({
       </View>
 
       {filteredRuns.map((run, index) => {
-        const actions = communityActions[run.id] || {liked: false};
+        const actions = {liked: communityActions[run.id]?.liked ?? run.liked ?? false};
         const likes = (run.likes || 320) + (actions.liked ? 1 : 0);
         const routeStart = run.startCoord || startCoord;
         const startDistance = distanceBetweenCoords(startCoord, routeStart);
         const isNearStart = startDistance <= 1.2;
-        const imageUri = routeImages[index % routeImages.length];
+        const imageUri = run.imageUrl || routeImages[index % routeImages.length];
 
         return (
           <TouchableOpacity
@@ -319,6 +323,14 @@ export function CommunityScreen({
           </TouchableOpacity>
         );
       })}
+      {(isCommunityLoading || communityError) && (
+        <View style={styles.communityStatusBox}>
+          <Text style={styles.communityStatusTitle}>
+            {isCommunityLoading ? '커뮤니티 루트를 불러오는 중입니다' : '서버 목록을 불러오지 못했습니다'}
+          </Text>
+          {communityError && <Text style={styles.communityStatusText}>{communityError}</Text>}
+        </View>
+      )}
       {filteredRuns.length === 0 && (
         <View style={styles.communityEmptyBox}>
           <Text style={styles.communityEmptyTitle}>조건에 맞는 루트가 없습니다</Text>

@@ -43,12 +43,14 @@ export interface SavedRun {
   author?: string;
   location?: string;
   likes?: number;
+  liked?: boolean;
   description?: string;
   tags?: string[];
   startCoord?: Coordinate;
   recordId?: string;
   routeId?: string;
   communityRouteId?: string;
+  routePoints?: Coordinate[];
   imageUrl?: string;
   createdAt?: string;
 }

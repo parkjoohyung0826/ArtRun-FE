@@ -4,6 +4,15 @@ import {Alert} from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import type WebView from 'react-native-webview';
 import type {WebViewMessageEvent} from 'react-native-webview';
+import {
+  deleteCommunityRoute,
+  getCommunityRoute,
+  getCommunityRoutes,
+  likeCommunityRoute,
+  prepareCommunityRun,
+  registerCommunityRoute,
+  unlikeCommunityRoute,
+} from '../../api/communityApi';
 import {generateRoute, regenerateRoute} from '../../api/routeApi';
 import {COMMUNITY_RUNS} from '../../constants/appData';
 import {SHAPES} from '../../shapes';
@@ -19,6 +28,7 @@ import type {
 import {distanceBetweenCoords, parseDistanceKm, parsePaceMinutes} from '../../utils/geo';
 import {createNaverStaticRouteMapUrl} from '../../utils/naverStaticMap';
 import {formatDuration, inferPresetFromPrompt, shapeNameFromKey} from '../../utils/routeFormat';
+import {communityRouteToSavedRun} from '../profile/profileMappers';
 import {ACTIVITY_API_TYPES, SHAPE_API_TYPES} from '../routing/routeConstants';
 import {waitForRouteTask} from '../routing/routeTask';
 import {useRunSession} from './useRunSession';
@@ -66,6 +76,9 @@ export function useRunFlow({
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityFilter, setCommunityFilter] = useState<CommunityFilter>('전체');
   const [communityActions, setCommunityActions] = useState<Record<string, {liked: boolean}>>({});
+  const [serverCommunityRuns, setServerCommunityRuns] = useState<SavedRun[]>([]);
+  const [isCommunityLoading, setIsCommunityLoading] = useState(false);
+  const [communityError, setCommunityError] = useState<string | null>(null);
 
   const activeShapeKey = useMemo(
     () => (shapePrompt.trim() ? inferPresetFromPrompt(shapePrompt) : selectedShape),
@@ -129,11 +142,48 @@ export function useRunFlow({
     () => createNaverStaticRouteMapUrl(routeStats?.routePoints || []),
     [routeStats?.routePoints],
   );
+  const communityRuns = useMemo(() => {
+    const remoteRuns = serverCommunityRuns.length > 0 ? serverCommunityRuns : COMMUNITY_RUNS;
+    const sharedLocalRuns = savedRuns.filter(
+      run =>
+        run.shared &&
+        !remoteRuns.some(
+          remote =>
+            remote.id === run.id ||
+            (remote.recordId && remote.recordId === run.recordId) ||
+            (remote.routeId && remote.routeId === run.routeId),
+        ),
+    );
+    return [...remoteRuns, ...sharedLocalRuns];
+  }, [savedRuns, serverCommunityRuns]);
   const likedCommunityRuns = useMemo(() => {
-    const communityRuns = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
-    const localLikedRuns = communityRuns.filter(run => communityActions[run.id]?.liked);
+    const localLikedRuns = communityRuns.filter(
+      run => communityActions[run.id]?.liked ?? run.liked,
+    );
     return [...serverLikedRuns, ...localLikedRuns];
-  }, [communityActions, savedRuns, serverLikedRuns]);
+  }, [communityActions, communityRuns, serverLikedRuns]);
+
+  const loadCommunityRoutes = useCallback(async () => {
+    setIsCommunityLoading(true);
+    setCommunityError(null);
+    try {
+      const response = await getCommunityRoutes(accessToken, {
+        page: 0,
+        size: 50,
+        sort: ['createdAt,desc'],
+      });
+      setServerCommunityRuns(response.data.content.map(route => communityRouteToSavedRun(route)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '커뮤니티 루트 조회에 실패했습니다.';
+      setCommunityError(message);
+    } finally {
+      setIsCommunityLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    loadCommunityRoutes();
+  }, [loadCommunityRoutes]);
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -330,11 +380,96 @@ export function useRunFlow({
     );
   }, [postToMap]);
 
-  const toggleShare = useCallback((id: string) => {
-    setSavedRuns(prev =>
-      prev.map(run => (run.id === id ? {...run, shared: !run.shared} : run)),
-    );
-  }, [setSavedRuns]);
+  const handleSelectCommunityId = useCallback(
+    async (id: string | null) => {
+      setSelectedCommunityId(id);
+      if (!id || !serverCommunityRuns.some(run => run.id === id)) return;
+
+      try {
+        const response = await getCommunityRoute(id, accessToken);
+        const nextRun = communityRouteToSavedRun(response.data);
+        setServerCommunityRuns(prev => prev.map(run => (run.id === id ? nextRun : run)));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '커뮤니티 루트 상세 조회에 실패했습니다.';
+        setCommunityError(message);
+      }
+    },
+    [accessToken, serverCommunityRuns, setSelectedCommunityId],
+  );
+
+  const registerSavedRunToCommunity = useCallback(
+    async (run: SavedRun) => {
+      if (!accessToken || !run.recordId) {
+        setSavedRuns(prev =>
+          prev.map(item => (item.id === run.id ? {...item, shared: true} : item)),
+        );
+        return run;
+      }
+
+      const response = await registerCommunityRoute(accessToken, {
+        recordId: run.recordId,
+        title: run.shape,
+        description:
+          run.description ||
+          `${run.shape} 모양으로 완주한 ${run.distance} 러닝 아트 루트입니다.`,
+      });
+      const serverRun = communityRouteToSavedRun(response.data);
+
+      setServerCommunityRuns(prev => {
+        const withoutDuplicate = prev.filter(item => item.id !== serverRun.id);
+        return [serverRun, ...withoutDuplicate];
+      });
+      setSavedRuns(prev =>
+        prev.map(item =>
+          item.id === run.id
+            ? {
+                ...item,
+                shared: true,
+                communityRouteId: serverRun.communityRouteId,
+                routeId: serverRun.routeId || item.routeId,
+                likes: serverRun.likes,
+              }
+            : item,
+        ),
+      );
+      return serverRun;
+    },
+    [accessToken, setSavedRuns],
+  );
+
+  const toggleShare = useCallback(
+    async (id: string) => {
+      const targetRun = savedRuns.find(run => run.id === id);
+      if (!targetRun) return;
+
+      if (!targetRun.shared) {
+        try {
+          await registerSavedRunToCommunity(targetRun);
+          Alert.alert('커뮤니티 등록 완료', `${targetRun.shape} 루트가 커뮤니티에 등록되었습니다.`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '커뮤니티 등록에 실패했습니다.';
+          Alert.alert('커뮤니티 등록 실패', message);
+        }
+        return;
+      }
+
+      if (targetRun.communityRouteId && accessToken) {
+        try {
+          await deleteCommunityRoute(accessToken, targetRun.communityRouteId);
+          setServerCommunityRuns(prev => prev.filter(run => run.id !== targetRun.communityRouteId));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '커뮤니티 공유 해제에 실패했습니다.';
+          Alert.alert('공유 해제 실패', message);
+          return;
+        }
+      }
+
+      setSavedRuns(prev =>
+        prev.map(run => (run.id === id ? {...run, shared: false, communityRouteId: undefined} : run)),
+      );
+    },
+    [accessToken, registerSavedRunToCommunity, savedRuns, setSavedRuns],
+  );
 
   const handleRegisterCompletedRun = useCallback((id: string | null) => {
     if (!id) {
@@ -348,28 +483,77 @@ export function useRunFlow({
       return;
     }
 
-    setSavedRuns(prev =>
-      prev.map(run => (run.id === id ? {...run, shared: true} : run)),
-    );
-    Alert.alert('커뮤니티 등록 완료', `${targetRun.shape} 루트가 커뮤니티에 등록되었습니다.`);
-    setActiveTab('community');
-    setSelectedCommunityId(id);
-  }, [savedRuns, setActiveTab, setSavedRuns, setSelectedCommunityId]);
+    registerSavedRunToCommunity(targetRun)
+      .then(serverRun => {
+        Alert.alert('커뮤니티 등록 완료', `${targetRun.shape} 루트가 커뮤니티에 등록되었습니다.`);
+        setActiveTab('community');
+        setSelectedCommunityId(serverRun.communityRouteId || id);
+      })
+      .catch(error => {
+        const message = error instanceof Error ? error.message : '커뮤니티 등록에 실패했습니다.';
+        Alert.alert('커뮤니티 등록 실패', message);
+      });
+  }, [registerSavedRunToCommunity, savedRuns, setActiveTab, setSelectedCommunityId]);
 
-  const toggleCommunityAction = useCallback((id: string) => {
-    setCommunityActions(prev => {
-      const current = prev[id] || {liked: false};
-      return {
+  const toggleCommunityAction = useCallback(
+    async (id: string) => {
+      const targetRun = communityRuns.find(run => run.id === id);
+      const currentLiked = communityActions[id]?.liked ?? targetRun?.liked ?? false;
+      const nextLiked = !currentLiked;
+
+      setCommunityActions(prev => ({
         ...prev,
         [id]: {
-          liked: !current.liked,
+          liked: nextLiked,
         },
-      };
-    });
-  }, []);
+      }));
+      setServerCommunityRuns(prev =>
+        prev.map(run =>
+          run.id === id
+            ? {
+                ...run,
+                liked: nextLiked,
+                likes: Math.max(0, (run.likes || 0) + (nextLiked ? 1 : -1)),
+              }
+            : run,
+        ),
+      );
+
+      if (!targetRun?.communityRouteId || !accessToken) return;
+
+      try {
+        if (nextLiked) {
+          await likeCommunityRoute(accessToken, targetRun.communityRouteId);
+        } else {
+          await unlikeCommunityRoute(accessToken, targetRun.communityRouteId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '좋아요 API 호출에 실패했습니다.';
+        setCommunityActions(prev => ({
+          ...prev,
+          [id]: {
+            liked: currentLiked,
+          },
+        }));
+        setServerCommunityRuns(prev =>
+          prev.map(run =>
+            run.id === id
+              ? {
+                  ...run,
+                  liked: currentLiked,
+                  likes: Math.max(0, (run.likes || 0) + (nextLiked ? -1 : 1)),
+                }
+              : run,
+          ),
+        );
+        Alert.alert('좋아요 실패', message);
+      }
+    },
+    [accessToken, communityActions, communityRuns],
+  );
 
   const prepareCommunityRoute = useCallback(
-    (run: SavedRun, syncStartLocation: boolean) => {
+    async (run: SavedRun, syncStartLocation: boolean) => {
       const routeStart = run.startCoord || startCoord;
       const nextDistance = parseDistanceKm(run.distance);
       const nextShape = inferPresetFromPrompt(run.shape);
@@ -387,15 +571,63 @@ export function useRunFlow({
       setRunProgress(0);
       resetSession();
       setVoiceCue(`${run.location || '커뮤니티'} ${run.shape} 루트를 불러옵니다.`);
-      setPendingQuickGenerate(true);
       setActiveTab('run');
+
+      if (run.communityRouteId) {
+        try {
+          const response = await prepareCommunityRun(accessToken, run.communityRouteId, {
+            lat: routeStart.lat,
+            lng: routeStart.lng,
+          });
+          const distanceToStart = response.data.distanceToStart || 0;
+
+          if (!response.data.canRun) {
+            Alert.alert(
+              '출발 위치 확인 필요',
+              `루트 시작점에서 약 ${distanceToStart.toFixed(0)}m 떨어져 있습니다. 시작점 근처에서 다시 시도해 주세요.`,
+            );
+            setRoutePhase('idle');
+            return;
+          }
+
+          if (run.routePoints?.length) {
+            postToMap({
+              type: 'DRAW_ROUTE',
+              points: run.routePoints,
+              startLat: routeStart.lat,
+              startLng: routeStart.lng,
+            });
+          }
+          setRouteStats({
+            routeId: response.data.routeId || run.routeId,
+            distKm: nextDistance.toFixed(2),
+            duration: formatDuration(null, nextDistance),
+            matchPct: run.matchPct,
+            shapeLabel: run.shape,
+            routePoints: run.routePoints || [],
+          });
+          setRoutePhase('ready');
+          setVoiceCue(`${run.shape} 커뮤니티 루트가 준비되었습니다.`);
+          setSheetSnap('expanded');
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '커뮤니티 루트 준비에 실패했습니다.';
+          Alert.alert('루트 준비 실패', message);
+          setRoutePhase('idle');
+          return;
+        }
+      }
+
+      setPendingQuickGenerate(true);
     },
     [
+      accessToken,
       postToMap,
       resetRouteDraft,
       resetSession,
       setActiveTab,
       setRunProgress,
+      setSheetSnap,
       setVoiceCue,
       startCoord,
     ],
@@ -427,8 +659,10 @@ export function useRunFlow({
     activity,
     averagePaceLabel,
     communityActions,
+    communityError,
     communityFilter,
     communityQuery,
+    communityRuns,
     currentBpm,
     currentPace,
     distance,
@@ -441,9 +675,11 @@ export function useRunFlow({
     handleRegenerate,
     handleRegisterCompletedRun,
     handleSaveShareCard,
+    handleSelectCommunityId,
     handleStartRun,
     handleUseCommunityRoute,
     isGenerating,
+    isCommunityLoading,
     lastCompletedRunId,
     likedCommunityRuns,
     mapReady,

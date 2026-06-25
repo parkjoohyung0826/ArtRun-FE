@@ -180,13 +180,15 @@ export default function ShapeRunApp() {
 
   const renderCommunity = () => (
     <CommunityScreen
-      savedRuns={savedRuns}
+      communityRuns={run.communityRuns}
       communityActions={run.communityActions}
+      communityError={run.communityError}
+      isCommunityLoading={run.isCommunityLoading}
       selectedCommunityId={selectedCommunityId}
       communityQuery={run.communityQuery}
       communityFilter={run.communityFilter}
       startCoord={run.startCoord}
-      onSelectCommunityId={setSelectedCommunityId}
+      onSelectCommunityId={run.handleSelectCommunityId}
       onChangeQuery={run.setCommunityQuery}
       onChangeFilter={run.setCommunityFilter}
       onToggleAction={run.toggleCommunityAction}

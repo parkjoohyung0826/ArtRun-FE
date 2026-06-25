@@ -1,4 +1,5 @@
-import type {CommunityRouteResponse, RecordDetailResponse} from '../../api/userApi';
+import type {CommunityRouteResponse} from '../../api/communityApi';
+import type {RecordDetailResponse} from '../../api/userApi';
 import type {Coordinate, SavedRun} from '../../types/app';
 
 export const formatPaceFromRecord = (
@@ -35,10 +36,11 @@ export const recordToSavedRun = (
     author,
     location: '내 완주 루트',
     likes: 0,
-    description: '서버에 저장된 완주 기록입니다.',
-    tags: ['완주 기록', '서버 동기화'],
-    startCoord: firstPoint(record.actualPolyline) || firstPoint(record.plannedPolyline),
-    imageUrl: record.imageUrl,
+  description: '서버에 저장된 완주 기록입니다.',
+  tags: ['완주 기록', '서버 동기화'],
+  startCoord: firstPoint(record.actualPolyline) || firstPoint(record.plannedPolyline),
+  routePoints: record.plannedPolyline,
+  imageUrl: record.imageUrl,
     createdAt: record.createdAt,
   };
 };
@@ -55,9 +57,11 @@ export const communityRouteToSavedRun = (route: CommunityRouteResponse): SavedRu
   author: route.author?.nickname || route.author?.email || '커뮤니티 러너',
   location: '커뮤니티 루트',
   likes: route.likeCount || 0,
+  liked: Boolean(route.liked),
   description: route.description,
   tags: route.liked ? ['좋아요', '커뮤니티'] : ['공유', '커뮤니티'],
   startCoord: firstPoint(route.polyline),
+  routePoints: route.polyline,
   imageUrl: route.imageUrl,
   createdAt: route.createdAt,
 });
