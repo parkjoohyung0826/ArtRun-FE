@@ -21,6 +21,7 @@ export const routeStatsFromDetail = (
     shapeLabel,
     routePoints: detail.polyline || [],
     checkpoints: detail.checkpoints || [],
+    pedestrianRoadRatio: detail.pedestrianRoadRatio,
   };
 };
 
@@ -43,5 +44,6 @@ export const routeStatsFromCandidate = (
     matchPct: scoreToPercent(candidate.similarityScore),
     shapeLabel,
     routePoints: candidate.polyline || [],
+    pedestrianRoadRatio: candidate.pedestrianRoadRatio,
   };
 };

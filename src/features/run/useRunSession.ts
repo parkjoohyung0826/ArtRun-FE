@@ -2,7 +2,16 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import type {Dispatch, SetStateAction} from 'react';
 import {Alert} from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
-import {saveRecord, startSession, trackLocation} from '../../api/routeApi';
+import {regenerateShareCard, saveRecord} from '../../api/recordApi';
+import {
+  cancelSession,
+  finishSession,
+  getSession,
+  pauseSession,
+  resumeSession,
+  startSession,
+  trackLocation,
+} from '../../api/sessionApi';
 import type {Coordinate, RoutePhase, RouteStats, SavedRun, TabKey} from '../../types/app';
 import {distanceBetweenCoords} from '../../utils/geo';
 import {shapeNameFromKey} from '../../utils/routeFormat';
@@ -10,6 +19,7 @@ import {shapeNameFromKey} from '../../utils/routeFormat';
 const START_DISTANCE_LIMIT_KM = 0.2;
 
 interface UseRunSessionParams {
+  accessToken?: string;
   authName: string;
   distance: number;
   postToMap: (data: object) => void;
@@ -26,6 +36,7 @@ interface UseRunSessionParams {
 }
 
 export function useRunSession({
+  accessToken,
   authName,
   distance,
   postToMap,
@@ -50,6 +61,7 @@ export function useRunSession({
   const [voiceCue, setVoiceCue] = useState('경로를 생성하면 러닝 코치가 준비됩니다.');
   const [shareCardSaved, setShareCardSaved] = useState(false);
   const [lastCompletedRunId, setLastCompletedRunId] = useState<string | null>(null);
+  const [lastCompletedRecordId, setLastCompletedRecordId] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -64,11 +76,15 @@ export function useRunSession({
     setGpsPoints([]);
   }, []);
 
-  const finishRun = useCallback(async () => {
+  const clearRunWatch = useCallback(() => {
     if (runWatchId.current !== null) {
       Geolocation.clearWatch(runWatchId.current);
       runWatchId.current = null;
     }
+  }, []);
+
+  const finishRun = useCallback(async () => {
+    clearRunWatch();
     setRoutePhase('complete');
     setVoiceCue('러닝을 완료했습니다. 루트 완주 기록이 저장되었습니다.');
     const completedRunId = `r${Date.now()}`;
@@ -80,18 +96,30 @@ export function useRunSession({
 
     if (sessionId && routeStats?.routeId) {
       try {
-        const response = await saveRecord({
+        await finishSession(accessToken, sessionId);
+        const recordPoints =
+          gpsPoints.length >= 2
+            ? gpsPoints
+            : routeStats.routePoints.map((point, index) => ({
+                ...point,
+                timestamp: Date.now() + index * 1000,
+              }));
+
+        if (recordPoints.length < 2) {
+          throw new Error('기록 저장에 필요한 GPS 포인트가 부족합니다.');
+        }
+
+        const response = await saveRecord(accessToken, {
           sessionId,
           routeId: routeStats.routeId,
-          gpsPoints: gpsPoints.length
-            ? gpsPoints
-            : routeStats.routePoints.map(point => ({...point, timestamp: Date.now()})),
+          gpsPoints: recordPoints,
           totalTimeSeconds,
         });
         savedRecord = {
           recordId: response.data.recordId,
           imageUrl: response.data.imageUrl,
         };
+        setLastCompletedRecordId(response.data.recordId);
       } catch (error) {
         const message = error instanceof Error ? error.message : '기록 저장 API 호출에 실패했습니다.';
         setVoiceCue(`완주는 완료했지만 서버 기록 저장에 실패했습니다. ${message}`);
@@ -121,7 +149,9 @@ export function useRunSession({
     });
     setSessionId(null);
   }, [
+    accessToken,
     authName,
+    clearRunWatch,
     distance,
     gpsPoints,
     routeStats,
@@ -157,11 +187,15 @@ export function useRunSession({
         );
         postToMap({type: 'UPDATE_RUNNER', location: currentPoint});
 
-        trackLocation(sessionId, {
-          ...currentPoint,
-          timestamp,
-          currentSpeed: speedMps,
-        })
+        trackLocation(
+          accessToken,
+          sessionId,
+          {
+            ...currentPoint,
+            timestamp,
+            currentSpeed: speedMps,
+          },
+        )
           .then(response => {
             const data = response.data;
             const completionRate = Number(data.completionRate || 0);
@@ -213,7 +247,7 @@ export function useRunSession({
         runWatchId.current = null;
       }
     };
-  }, [finishRun, postToMap, routePhase, selectedShape, sessionId, shapePrompt, targetPace]);
+  }, [accessToken, finishRun, postToMap, routePhase, selectedShape, sessionId, shapePrompt, targetPace]);
 
   const handleStartRun = useCallback(async () => {
     if (!routeStats?.routeId) {
@@ -244,7 +278,7 @@ export function useRunSession({
         return;
       }
 
-      const response = await startSession(routeStats.routeId);
+      const response = await startSession(accessToken, routeStats.routeId);
       setSessionId(response.data.sessionId);
       setActiveTab('run');
       setRoutePhase('running');
@@ -253,40 +287,166 @@ export function useRunSession({
       setGpsPoints([{...currentPosition, timestamp: Date.now()}]);
       setShareCardSaved(false);
       setLastCompletedRunId(null);
+      setLastCompletedRecordId(null);
       setCurrentPace(targetPace);
       setCurrentBpm(156);
       runStartedAt.current = Date.now();
       postToMap({type: 'UPDATE_RUNNER', location: currentPosition});
       setVoiceCue(response.data.message || `${routeStats.shapeLabel} 러닝을 시작합니다.`);
+      getSession(accessToken, response.data.sessionId).catch(() => undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'GPS 확인 또는 세션 시작에 실패했습니다.';
       Alert.alert('러닝 시작 실패', message);
     }
-  }, [postToMap, routeStats, setActiveTab, setRoutePhase, setSheetSnap, startCoord, targetPace]);
+  }, [
+    accessToken,
+    postToMap,
+    routeStats,
+    setActiveTab,
+    setRoutePhase,
+    setSheetSnap,
+    startCoord,
+    targetPace,
+  ]);
+
+  const handlePauseRun = useCallback(async () => {
+    if (!sessionId) {
+      Alert.alert('일시정지 불가', '진행 중인 세션이 없습니다.');
+      return;
+    }
+
+    try {
+      await pauseSession(accessToken, sessionId);
+      clearRunWatch();
+      setRoutePhase('paused');
+      setVoiceCue('러닝을 일시정지했습니다. 재개하면 위치 추적을 다시 시작합니다.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '세션 일시정지에 실패했습니다.';
+      Alert.alert('일시정지 실패', message);
+    }
+  }, [accessToken, clearRunWatch, sessionId, setRoutePhase]);
+
+  const handleResumeRun = useCallback(async () => {
+    if (!sessionId) {
+      Alert.alert('재개 불가', '재개할 세션이 없습니다.');
+      return;
+    }
+
+    try {
+      await resumeSession(accessToken, sessionId);
+      await getSession(accessToken, sessionId).catch(() => undefined);
+      setRoutePhase('running');
+      setVoiceCue('러닝을 재개했습니다. 현재 위치를 다시 확인합니다.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '세션 재개에 실패했습니다.';
+      Alert.alert('재개 실패', message);
+    }
+  }, [accessToken, sessionId, setRoutePhase]);
+
+  const handleCancelRun = useCallback(() => {
+    const resetToReady = () => {
+      clearRunWatch();
+      setRoutePhase(routeStats ? 'ready' : 'idle');
+      setRunProgress(0);
+      resetSession();
+      setVoiceCue('러닝 세션을 취소했습니다.');
+    };
+
+    if (!sessionId) {
+      resetToReady();
+      return;
+    }
+
+    Alert.alert('러닝 취소', '현재 러닝 세션을 취소할까요?', [
+      {text: '계속 달리기', style: 'cancel'},
+      {
+        text: '취소',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await cancelSession(accessToken, sessionId);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '세션 취소 API 호출 실패';
+            Alert.alert('세션 취소 실패', `${message}\n\n앱에서는 세션을 종료합니다.`);
+          }
+          resetToReady();
+        },
+      },
+    ]);
+  }, [
+    accessToken,
+    clearRunWatch,
+    resetSession,
+    routeStats,
+    sessionId,
+    setRoutePhase,
+  ]);
+
+  const handleFinishRun = useCallback(() => {
+    if (!sessionId) {
+      Alert.alert('완료 불가', '완료할 세션이 없습니다.');
+      return;
+    }
+    finishRun();
+  }, [finishRun, sessionId]);
 
   const handleNewRun = useCallback(() => {
     setRoutePhase('idle');
     setRunProgress(0);
+    clearRunWatch();
     resetSession();
     setShareCardSaved(false);
     setLastCompletedRunId(null);
+    setLastCompletedRecordId(null);
     setVoiceCue('새 러닝 루트를 생성할 준비가 되었습니다.');
-  }, [resetSession, setRoutePhase]);
+  }, [clearRunWatch, resetSession, setRoutePhase]);
 
-  const handleSaveShareCard = useCallback(() => {
-    setShareCardSaved(true);
-    Alert.alert(
-      '공유 카드 저장',
-      'SNS 공유용 러닝 카드가 저장되었습니다. 실제 갤러리 저장은 네이티브 저장 권한 연동 단계에서 연결하면 됩니다.',
-    );
-  }, []);
+  const handleSaveShareCard = useCallback(async () => {
+    if (!lastCompletedRecordId) {
+      setShareCardSaved(true);
+      Alert.alert(
+        '공유 카드 저장',
+        '서버 기록 ID가 없어 앱 내 공유 카드 상태만 저장했습니다.',
+      );
+      return;
+    }
+
+    try {
+      const response = await regenerateShareCard(accessToken, lastCompletedRecordId);
+      const nextImageUrl =
+        response.data.imageUrl ||
+        response.data.shareCardUrl ||
+        response.data.url ||
+        response.data.cardUrl;
+
+      if (nextImageUrl) {
+        setSavedRuns(prev =>
+          prev.map(run =>
+            run.recordId === lastCompletedRecordId
+              ? {...run, imageUrl: nextImageUrl}
+              : run,
+          ),
+        );
+      }
+      setShareCardSaved(true);
+      Alert.alert('공유 카드 저장', response.message || 'SNS 공유 카드가 재생성되었습니다.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '공유 카드 재생성에 실패했습니다.';
+      Alert.alert('공유 카드 저장 실패', message);
+    }
+  }, [accessToken, lastCompletedRecordId, setSavedRuns]);
 
   return {
     currentBpm,
     currentPace,
+    handleCancelRun,
+    handleFinishRun,
     handleNewRun,
+    handlePauseRun,
+    handleResumeRun,
     handleSaveShareCard,
     handleStartRun,
+    lastCompletedRecordId,
     lastCompletedRunId,
     resetSession,
     runProgress,

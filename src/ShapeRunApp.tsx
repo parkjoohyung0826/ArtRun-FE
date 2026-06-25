@@ -103,6 +103,7 @@ export default function ShapeRunApp() {
       routeStats={run.routeStats}
       isGenerating={run.isGenerating}
       mapReady={run.mapReady}
+      routeStatusMessage={run.voiceCue}
       sheetScrollBottomInset={sheetScrollBottomInset}
       onGoHome={() => setActiveTab('home')}
       onChangeShapePrompt={text => {
@@ -172,6 +173,10 @@ export default function ShapeRunApp() {
       completedRunId={run.lastCompletedRunId}
       completedRunShared={savedRuns.some(runItem => runItem.id === run.lastCompletedRunId && runItem.shared)}
       onSaveShareCard={run.handleSaveShareCard}
+      onPauseRun={run.handlePauseRun}
+      onResumeRun={run.handleResumeRun}
+      onCancelRun={run.handleCancelRun}
+      onFinishRun={run.handleFinishRun}
       onRegisterCommunity={run.handleRegisterCompletedRun}
       onGoHome={() => setActiveTab('home')}
       onNewRun={run.handleNewRun}

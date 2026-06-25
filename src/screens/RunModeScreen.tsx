@@ -7,7 +7,7 @@ import {
   View,
   type PanResponderInstance,
 } from 'react-native';
-import {Check, Download, Map, Navigation, Play} from 'lucide-react-native';
+import {Check, Download, Map, Navigation, Pause, Play, Square, X} from 'lucide-react-native';
 import {styles} from '../styles/appStyles';
 import type {RoutePhase, RouteStats} from '../types/app';
 
@@ -30,6 +30,10 @@ export function RunModeScreen({
   completedRunId,
   completedRunShared,
   onSaveShareCard,
+  onPauseRun,
+  onResumeRun,
+  onCancelRun,
+  onFinishRun,
   onRegisterCommunity,
   onGoHome,
   onNewRun,
@@ -52,10 +56,15 @@ export function RunModeScreen({
   completedRunId: string | null;
   completedRunShared: boolean;
   onSaveShareCard: () => void;
+  onPauseRun: () => void;
+  onResumeRun: () => void;
+  onCancelRun: () => void;
+  onFinishRun: () => void;
   onRegisterCommunity: (id: string | null) => void;
   onGoHome: () => void;
   onNewRun: () => void;
 }) {
+  const isPaused = routePhase === 'paused';
   const scrollContentStyle = [
     styles.sheetScrollContent,
     {paddingBottom: sheetScrollBottomInset},
@@ -203,9 +212,15 @@ export function RunModeScreen({
                 <Navigation size={24} color="#fff" strokeWidth={2.8} />
               </View>
               <View style={styles.runningInstructionCopy}>
-                <Text style={styles.runningKicker}>안내 중</Text>
-                <Text style={styles.runningTitle}>다음 포인트까지 320m</Text>
-                <Text style={styles.runningSub}>목표 페이스로 직진 후 좌측 라인에 진입하세요</Text>
+                <Text style={styles.runningKicker}>{isPaused ? '일시정지' : '안내 중'}</Text>
+                <Text style={styles.runningTitle}>
+                  {isPaused ? '러닝을 잠시 멈췄습니다' : '다음 포인트까지 320m'}
+                </Text>
+                <Text style={styles.runningSub}>
+                  {isPaused
+                    ? '재개 버튼을 누르면 GPS 추적을 다시 시작합니다'
+                    : '목표 페이스로 직진 후 좌측 라인에 진입하세요'}
+                </Text>
               </View>
               <View style={styles.runningProgressPill}>
                 <Text style={styles.runningProgressText}>{Math.round(runProgress * 100)}%</Text>
@@ -235,6 +250,36 @@ export function RunModeScreen({
                 <Play size={13} color="#fff" fill="#fff" strokeWidth={2.5} />
               </View>
               <Text style={styles.runningVoiceText}>{voiceCue}</Text>
+            </View>
+
+            <View style={styles.runningControlRow}>
+              <TouchableOpacity
+                style={styles.runningControlPrimary}
+                onPress={isPaused ? onResumeRun : onPauseRun}
+                activeOpacity={0.84}>
+                {isPaused ? (
+                  <Play size={16} color="#fff" fill="#fff" strokeWidth={2.5} />
+                ) : (
+                  <Pause size={16} color="#fff" strokeWidth={2.6} />
+                )}
+                <Text style={styles.runningControlPrimaryText}>
+                  {isPaused ? '재개' : '일시정지'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.runningControlButton}
+                onPress={onFinishRun}
+                activeOpacity={0.8}>
+                <Square size={15} color="#f8fafc" strokeWidth={2.5} />
+                <Text style={styles.runningControlButtonText}>완료</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.runningControlDanger}
+                onPress={onCancelRun}
+                activeOpacity={0.8}>
+                <X size={16} color="#fecaca" strokeWidth={2.7} />
+                <Text style={styles.runningControlDangerText}>취소</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>

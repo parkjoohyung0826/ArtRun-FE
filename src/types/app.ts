@@ -1,6 +1,6 @@
 export type TabKey = 'home' | 'run' | 'community' | 'profile';
 export type Activity = 'Running' | 'Walking' | 'Cycling';
-export type RoutePhase = 'idle' | 'ready' | 'running' | 'complete';
+export type RoutePhase = 'idle' | 'ready' | 'running' | 'paused' | 'complete';
 export type AuthMode = 'login' | 'signup';
 export type CommunityFilter = '전체' | '인기' | '근처';
 
@@ -31,6 +31,7 @@ export interface RouteStats {
   shapeLabel: string;
   routePoints: Coordinate[];
   checkpoints?: Coordinate[];
+  pedestrianRoadRatio?: number;
 }
 
 export interface SavedRun {

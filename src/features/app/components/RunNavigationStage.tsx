@@ -43,14 +43,20 @@ export function RunNavigationStage({
           mixedContentMode="compatibility"
           allowsInlineMediaPlayback
         />
-        {routePhase === 'running' ? (
+        {routePhase === 'running' || routePhase === 'paused' ? (
           <View style={styles.navigationBanner}>
             <View style={styles.navigationBannerIcon}>
               <MapPinned size={17} color="#2f80ff" strokeWidth={2.7} />
             </View>
             <View style={styles.navigationBannerTextBox}>
-              <Text style={styles.navigationBannerTitle}>320m 앞 포인트 통과</Text>
-              <Text style={styles.navigationBannerSub}>별 모양 상단 라인을 따라가세요</Text>
+              <Text style={styles.navigationBannerTitle}>
+                {routePhase === 'paused' ? '러닝 일시정지' : '320m 앞 포인트 통과'}
+              </Text>
+              <Text style={styles.navigationBannerSub}>
+                {routePhase === 'paused'
+                  ? '재개하면 위치 추적을 다시 시작합니다'
+                  : '별 모양 상단 라인을 따라가세요'}
+              </Text>
             </View>
           </View>
         ) : null}
@@ -74,7 +80,7 @@ export function RunNavigationStage({
             transform: [{translateY: sheetOffset}],
           },
         ]}>
-        {routePhase === 'running' || routePhase === 'complete'
+        {routePhase === 'running' || routePhase === 'paused' || routePhase === 'complete'
           ? renderRunMode()
           : renderPlan()}
       </Animated.View>

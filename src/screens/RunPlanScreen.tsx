@@ -28,6 +28,7 @@ export function RunPlanScreen({
   routeStats,
   isGenerating,
   mapReady,
+  routeStatusMessage,
   sheetScrollBottomInset,
   onGoHome,
   onChangeShapePrompt,
@@ -52,6 +53,7 @@ export function RunPlanScreen({
   routeStats: RouteStats | null;
   isGenerating: boolean;
   mapReady: boolean;
+  routeStatusMessage: string;
   sheetScrollBottomInset: number;
   onGoHome: () => void;
   onChangeShapePrompt: (text: string) => void;
@@ -247,6 +249,15 @@ export function RunPlanScreen({
             </Text>
           </View>
         </TouchableOpacity>
+
+        {(isGenerating || routeStats) && (
+          <View style={styles.routeStatusBox}>
+            <Text style={styles.routeStatusTitle}>
+              {isGenerating ? 'Route API 처리 중' : 'Route API 연결 완료'}
+            </Text>
+            <Text style={styles.routeStatusText}>{routeStatusMessage}</Text>
+          </View>
+        )}
 
         {routeStats && <RouteReadyCard stats={routeStats} />}
 

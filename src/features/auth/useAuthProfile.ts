@@ -3,11 +3,10 @@ import type {Dispatch, SetStateAction} from 'react';
 import {Alert} from 'react-native';
 import {login, logout, signup, withdraw} from '../../api/authApi';
 import type {AuthResponse} from '../../api/authApi';
+import {deleteRecord, getRecord} from '../../api/recordApi';
 import {
-  deleteMyRecord,
   getLikedRoutes,
   getMe,
-  getMyRecord,
   getMyRecords,
   getMySharedRoutes,
   getSummary,
@@ -217,7 +216,7 @@ export function useAuthProfile({
       if (!targetRun?.recordId || !authSession?.accessToken) return;
 
       try {
-        const response = await getMyRecord(authSession.accessToken, targetRun.recordId);
+        const response = await getRecord(authSession.accessToken, targetRun.recordId);
         setSavedRuns(prev =>
           prev.map(run =>
             run.id === id
@@ -256,7 +255,7 @@ export function useAuthProfile({
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteMyRecord(authSession.accessToken, targetRun.recordId as string);
+              await deleteRecord(authSession.accessToken, targetRun.recordId as string);
               setSavedRuns(prev => prev.filter(run => run.id !== id));
               setSelectedProfileRunId(null);
               await loadUserProfileData(authSession.accessToken);

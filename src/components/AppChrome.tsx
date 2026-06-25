@@ -37,6 +37,15 @@ export function ToggleRow({
 }
 
 export function RouteReadyCard({stats}: {stats: RouteStats}) {
+  const pedestrianRatio =
+    typeof stats.pedestrianRoadRatio === 'number'
+      ? Math.round(
+          stats.pedestrianRoadRatio <= 1
+            ? stats.pedestrianRoadRatio * 100
+            : stats.pedestrianRoadRatio,
+        )
+      : null;
+
   return (
     <View style={styles.readyCard}>
       <View>
@@ -47,6 +56,7 @@ export function RouteReadyCard({stats}: {stats: RouteStats}) {
         <Text style={styles.readyStat}>{stats.distKm} km</Text>
         <Text style={styles.readyStat}>{stats.duration}</Text>
         <Text style={styles.readyStat}>{stats.matchPct}%</Text>
+        {pedestrianRatio !== null && <Text style={styles.readyStat}>보행로 {pedestrianRatio}%</Text>}
       </View>
     </View>
   );

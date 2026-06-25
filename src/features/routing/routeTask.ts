@@ -1,7 +1,7 @@
 import {getRoute, getRouteStatus} from '../../api/routeApi';
 import type {RouteStats} from '../../types/app';
 import {shapeNameFromKey} from '../../utils/routeFormat';
-import {ROUTE_STATUS_DONE, ROUTE_STATUS_FAILED} from './routeConstants';
+import {ROUTE_STATUS_DONE, ROUTE_STATUS_FAILED, ROUTE_STATUS_LABELS} from './routeConstants';
 import {routeStatsFromCandidate, routeStatsFromDetail} from './routeMappers';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(() => resolve(), ms));
@@ -27,6 +27,8 @@ export async function waitForRouteTask({
     await sleep(attempt === 0 ? 700 : 1500);
     const statusResponse = await getRouteStatus(taskId, accessToken);
     const status = statusResponse.data.status?.toUpperCase?.() || '';
+    const statusMessage =
+      statusResponse.message || ROUTE_STATUS_LABELS[status] || `경로 생성 중입니다. 상태: ${status || 'PROCESSING'}`;
 
     if (ROUTE_STATUS_FAILED.has(status)) {
       throw new Error(statusResponse.data.errorMessage || '경로 생성에 실패했습니다.');
@@ -56,7 +58,7 @@ export async function waitForRouteTask({
       return nextStats;
     }
 
-    onStatus?.(`경로 생성 중입니다. 상태: ${status || 'PROCESSING'}`);
+    onStatus?.(statusMessage);
   }
 
   throw new Error('경로 생성 시간이 초과되었습니다.');
