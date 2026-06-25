@@ -1,7 +1,7 @@
 import {API_BASE_URL} from '../config';
 import type {Coordinate} from '../types/app';
 
-interface ApiResponse<T> {
+export interface ApiResponse<T> {
   success: boolean;
   message: string;
   data: T;
@@ -38,6 +38,15 @@ export interface RouteStatusData {
   candidateRoutes?: CandidateRoute[];
 }
 
+export interface RouteDetailData {
+  routeId: string;
+  distanceMeters: number;
+  similarityScore: number;
+  pedestrianRoadRatio: number;
+  polyline: Coordinate[];
+  checkpoints: Coordinate[];
+}
+
 export interface StartSessionData {
   sessionId: string;
   routeId: string;
@@ -72,7 +81,11 @@ export interface SaveRecordData {
   imageUrl: string;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(
+  path: string,
+  init?: RequestInit,
+  accessToken?: string,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -80,6 +93,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...(accessToken ? {Authorization: `Bearer ${accessToken}`} : {}),
         ...init?.headers,
       },
     });
@@ -88,23 +102,51 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`서버 연결 실패: ${message}`);
   }
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${body || 'API 요청 실패'}`);
+  const bodyText = await response.text().catch(() => '');
+  const body = bodyText
+    ? (() => {
+        try {
+          return JSON.parse(bodyText);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  if (!response.ok || body?.success === false) {
+    throw new Error(body?.message || `HTTP ${response.status}: ${bodyText || 'API 요청 실패'}`);
   }
 
-  return response.json();
+  return body;
 }
 
-export function generateRoute(request: GenerateRouteRequest) {
+export function generateRoute(request: GenerateRouteRequest, accessToken?: string) {
   return requestJson<ApiResponse<GenerateRouteData>>('/api/v1/routes/generate', {
     method: 'POST',
     body: JSON.stringify(request),
-  });
+  }, accessToken);
 }
 
-export function getRouteStatus(taskId: string) {
-  return requestJson<ApiResponse<RouteStatusData>>(`/api/v1/routes/status/${taskId}`);
+export function getRouteStatus(taskId: string, accessToken?: string) {
+  return requestJson<ApiResponse<RouteStatusData>>(
+    `/api/v1/routes/status/${taskId}`,
+    undefined,
+    accessToken,
+  );
+}
+
+export function getRoute(routeId: string, accessToken?: string) {
+  return requestJson<ApiResponse<RouteDetailData>>(
+    `/api/v1/routes/${routeId}`,
+    undefined,
+    accessToken,
+  );
+}
+
+export function regenerateRoute(routeId: string, accessToken?: string) {
+  return requestJson<ApiResponse<GenerateRouteData>>(`/api/v1/routes/${routeId}/regenerate`, {
+    method: 'POST',
+  }, accessToken);
 }
 
 export function startSession(routeId: string) {

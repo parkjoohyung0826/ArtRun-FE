@@ -6,6 +6,9 @@ export const baseStyles = {
       flex: 1,
       backgroundColor: SCREEN,
     },
+  rootNavigationMode: {
+      paddingTop: 0,
+    },
   header: {
       height: 62,
       paddingHorizontal: 22,

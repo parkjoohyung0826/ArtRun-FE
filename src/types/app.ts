@@ -30,6 +30,7 @@ export interface RouteStats {
   matchPct: number;
   shapeLabel: string;
   routePoints: Coordinate[];
+  checkpoints?: Coordinate[];
 }
 
 export interface SavedRun {
