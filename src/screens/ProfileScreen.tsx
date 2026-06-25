@@ -1,5 +1,12 @@
-import React, {useState} from 'react';
-import {ScrollView, Text, TouchableOpacity, View} from 'react-native';
+import React, {useEffect, useState} from 'react';
+import {
+  ActivityIndicator,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {
   Bookmark,
   Check,
@@ -16,7 +23,7 @@ import {
 } from 'lucide-react-native';
 import {ToggleRow} from '../components/AppChrome';
 import {styles} from '../styles/appStyles';
-import type {Preferences, SavedRun} from '../types/app';
+import type {Preferences, ProfileSummary, SavedRun} from '../types/app';
 import {parseDistanceKm} from '../utils/geo';
 
 export function ProfileScreen({
@@ -24,11 +31,17 @@ export function ProfileScreen({
   authEmail,
   savedRuns,
   likedRuns,
+  summary,
+  isLoading,
+  errorMessage,
   preferences,
   selectedRunId,
   onSelectRun,
   onToggleShare,
   onRegisterCommunity,
+  onDeleteRun,
+  onRefresh,
+  onUpdateProfile,
   onChangePreferences,
   onLogout,
   onDeleteAccount,
@@ -37,11 +50,17 @@ export function ProfileScreen({
   authEmail: string;
   savedRuns: SavedRun[];
   likedRuns: SavedRun[];
+  summary: ProfileSummary | null;
+  isLoading: boolean;
+  errorMessage: string | null;
   preferences: Preferences;
   selectedRunId: string | null;
   onSelectRun: (id: string | null) => void;
   onToggleShare: (id: string) => void;
   onRegisterCommunity: (id: string | null) => void;
+  onDeleteRun: (id: string) => void;
+  onRefresh: () => void;
+  onUpdateProfile: (nickname: string) => void;
   onChangePreferences: (updater: (prev: Preferences) => Preferences) => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
@@ -49,16 +68,29 @@ export function ProfileScreen({
   const [showRunList, setShowRunList] = useState(false);
   const [showLikedList, setShowLikedList] = useState(false);
   const [selectedLikedRunId, setSelectedLikedRunId] = useState<string | null>(null);
+  const [editableName, setEditableName] = useState(authName);
   const sharedCount = savedRuns.filter(run => run.shared).length;
-  const totalDistance = savedRuns
-    .reduce((sum, run) => sum + parseDistanceKm(run.distance), 0)
-    .toFixed(1);
+  const totalDistance = summary
+    ? summary.totalDistanceKm.toFixed(1)
+    : savedRuns.reduce((sum, run) => sum + parseDistanceKm(run.distance), 0).toFixed(1);
+  const totalRuns = summary?.totalRuns ?? savedRuns.length;
+  const averagePace = summary?.averagePaceMinPerKm
+    ? `${Math.floor(summary.averagePaceMinPerKm)}'${Math.round(
+        (summary.averagePaceMinPerKm % 1) * 60,
+      )
+        .toString()
+        .padStart(2, '0')}"`
+    : '-';
   const selectedRun = selectedRunId
     ? savedRuns.find(run => run.id === selectedRunId)
     : null;
   const selectedLikedRun = selectedLikedRunId
     ? likedRuns.find(run => run.id === selectedLikedRunId)
     : null;
+
+  useEffect(() => {
+    setEditableName(authName);
+  }, [authName]);
 
   if (selectedRun) {
     return (
@@ -138,6 +170,12 @@ export function ProfileScreen({
               {selectedRun.shared ? '커뮤니티 등록 해제' : '커뮤니티에 등록'}
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.profileDeleteButton}
+            onPress={() => onDeleteRun(selectedRun.id)}>
+            <Trash2 size={18} color="#fecaca" strokeWidth={2.4} />
+            <Text style={styles.profileDeleteText}>완주 기록 삭제</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     );
@@ -167,7 +205,7 @@ export function ProfileScreen({
             <Trophy size={24} color="#fff" strokeWidth={2.6} />
           </View>
           <View style={styles.profileHeaderCopy}>
-            <Text style={styles.profileRunListTitle}>{savedRuns.length}개의 완주 기록</Text>
+            <Text style={styles.profileRunListTitle}>{totalRuns}개의 완주 기록</Text>
             <Text style={styles.profileRunListSub}>
               누적 {totalDistance} km · 공유 루트 {sharedCount}개
             </Text>
@@ -200,6 +238,13 @@ export function ProfileScreen({
             </View>
           </TouchableOpacity>
         ))}
+
+        {savedRuns.length === 0 && (
+          <View style={styles.communityEmptyBox}>
+            <Text style={styles.communityEmptyTitle}>저장된 완주 기록이 없습니다</Text>
+            <Text style={styles.communityEmptyText}>러닝을 완료하면 서버 기록이 여기에 표시됩니다.</Text>
+          </View>
+        )}
       </ScrollView>
     );
   }
@@ -344,24 +389,45 @@ export function ProfileScreen({
           <Text style={styles.profileName}>{authName}</Text>
           <Text style={styles.profileSub}>{authEmail}</Text>
           <Text style={styles.profileSub}>
-            이번 달 {totalDistance} km · 공유 루트 {sharedCount}개
+            누적 {totalDistance} km · 평균 페이스 {averagePace}
           </Text>
         </View>
       </View>
 
+      {(isLoading || errorMessage) && (
+        <View style={styles.profileSyncCard}>
+          {isLoading ? <ActivityIndicator color="#38bdf8" /> : null}
+          <Text style={styles.profileSyncText}>
+            {isLoading ? '서버 프로필을 동기화하고 있습니다.' : errorMessage}
+          </Text>
+        </View>
+      )}
+
       <View style={styles.profileAccountCard}>
         <View style={styles.profileSectionHeader}>
           <Text style={styles.profileSectionTitle}>계정 정보</Text>
-          <View style={styles.profileStatusPill}>
-            <Text style={styles.profileStatusText}>활성</Text>
-          </View>
+          <TouchableOpacity style={styles.profileStatusPill} onPress={onRefresh}>
+            <Text style={styles.profileStatusText}>새로고침</Text>
+          </TouchableOpacity>
         </View>
         <View style={styles.profileInfoRow}>
           <User size={18} color="#38bdf8" strokeWidth={2.4} />
           <View style={styles.profileInfoCopy}>
             <Text style={styles.profileInfoLabel}>닉네임</Text>
-            <Text style={styles.profileInfoValue}>{authName}</Text>
+            <TextInput
+              value={editableName}
+              onChangeText={setEditableName}
+              placeholder="닉네임"
+              placeholderTextColor="#64748b"
+              style={styles.profileEditInput}
+            />
           </View>
+          <TouchableOpacity
+            style={styles.profileInlineButton}
+            onPress={() => onUpdateProfile(editableName)}
+            disabled={isLoading}>
+            <Text style={styles.profileInlineButtonText}>저장</Text>
+          </TouchableOpacity>
         </View>
         <View style={styles.profileInfoRow}>
           <Mail size={18} color="#38bdf8" strokeWidth={2.4} />
@@ -382,7 +448,7 @@ export function ProfileScreen({
         <View style={styles.profileHeaderCopy}>
           <Text style={styles.profileRunEntryTitle}>내 완주 기록</Text>
           <Text style={styles.profileRunEntrySub}>
-            {savedRuns.length}개 기록 · 누적 {totalDistance} km · 공유 {sharedCount}개
+            {totalRuns}개 기록 · 누적 {totalDistance} km · 공유 {sharedCount}개
           </Text>
           <View style={styles.profileRunEntryMetaRow}>
             <Text style={styles.profileRunEntryMeta}>

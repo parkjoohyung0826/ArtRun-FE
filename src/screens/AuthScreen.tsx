@@ -1,5 +1,12 @@
 import React from 'react';
-import {ScrollView, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {Lock, LogIn, Mail, User, UserPlus} from 'lucide-react-native';
 import {styles} from '../styles/appStyles';
 import type {AuthMode} from '../types/app';
@@ -9,21 +16,25 @@ export function AuthScreen({
   authName,
   authEmail,
   authPassword,
+  isSubmitting,
   onChangeAuthMode,
   onChangeName,
   onChangeEmail,
   onChangePassword,
   onSubmit,
+  onSocialLogin,
 }: {
   authMode: AuthMode;
   authName: string;
   authEmail: string;
   authPassword: string;
+  isSubmitting: boolean;
   onChangeAuthMode: (mode: AuthMode) => void;
   onChangeName: (name: string) => void;
   onChangeEmail: (email: string) => void;
   onChangePassword: (password: string) => void;
   onSubmit: () => void;
+  onSocialLogin: (provider: 'KAKAO' | 'GOOGLE') => void;
 }) {
   const isSignup = authMode === 'signup';
 
@@ -87,10 +98,17 @@ export function AuthScreen({
           />
         </View>
 
-        <TouchableOpacity style={styles.authPrimaryButton} onPress={onSubmit}>
-          <Text style={styles.authPrimaryButtonText}>
-            {isSignup ? '계정 만들기' : '로그인'}
-          </Text>
+        <TouchableOpacity
+          style={styles.authPrimaryButton}
+          onPress={onSubmit}
+          disabled={isSubmitting}>
+          {isSubmitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.authPrimaryButtonText}>
+              {isSignup ? '계정 만들기' : '로그인'}
+            </Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.authDividerRow}>
@@ -99,17 +117,24 @@ export function AuthScreen({
           <View style={styles.authDividerLine} />
         </View>
 
-        <TouchableOpacity style={styles.kakaoButton} onPress={onSubmit}>
+        <TouchableOpacity
+          style={styles.kakaoButton}
+          onPress={() => onSocialLogin('KAKAO')}
+          disabled={isSubmitting}>
           <Text style={styles.kakaoIconText}>K</Text>
           <Text style={styles.kakaoButtonText}>카카오로 계속하기</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.googleButton} onPress={onSubmit}>
+        <TouchableOpacity
+          style={styles.googleButton}
+          onPress={() => onSocialLogin('GOOGLE')}
+          disabled={isSubmitting}>
           <Text style={styles.googleIconText}>G</Text>
           <Text style={styles.googleButtonText}>Google로 계속하기</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.authSwitchButton}
+          disabled={isSubmitting}
           onPress={() => onChangeAuthMode(isSignup ? 'login' : 'signup')}>
           <Text style={styles.authSwitchText}>
             {isSignup ? '이미 계정이 있어요' : '새 계정 만들기'}

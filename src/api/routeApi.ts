@@ -1,76 +1,129 @@
 import {API_BASE_URL} from '../config';
+import type {Coordinate} from '../types/app';
 
-// ── Request ──────────────────────────────────────────────────────────────────
+interface ApiResponse<T> {
+  success: boolean;
+  message: string;
+  data: T;
+}
 
 export interface GenerateRouteRequest {
   requestText: string;
-  shapeType: string;      // e.g. "HEART", "STAR", "DOG", "CAT", "CIRCLE"
-  activityType: string;   // "RUNNING" | "WALKING" | "CYCLING"
+  shapeType: string;
+  activityType: string;
   targetDistanceKm: number;
-  startPoint: {lat: number; lng: number};
-  preferences: {avoidMainRoad: boolean; preferPark: boolean};
+  startPoint: Coordinate;
+  preferences: {
+    avoidMainRoad: boolean;
+    preferPark: boolean;
+  };
 }
 
-// ── Response ─────────────────────────────────────────────────────────────────
-
-export interface GenerateRouteResponse {
-  success: boolean;
+export interface GenerateRouteData {
+  taskId: string;
   message: string;
-  data: {taskId: string; message: string};
 }
 
-export interface RoutePoint {
-  lat: number;
-  lng: number;
+export interface CandidateRoute {
+  routeId: string;
+  distance: number;
+  similarityScore: number;
+  pedestrianRoadRatio: number;
+  polyline: Coordinate[];
 }
-
-export type RouteStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
 export interface RouteStatusData {
-  status: RouteStatus;
-  routeId?: string;
-  routePoints?: RoutePoint[];
-  totalDistanceMeters?: number;
-  estimatedDurationSeconds?: number;
-  shapeMatchScore?: number;
+  status: string;
   errorMessage?: string;
+  candidateRoutes?: CandidateRoute[];
 }
 
-export interface RouteStatusResponse {
-  success: boolean;
+export interface StartSessionData {
+  sessionId: string;
+  routeId: string;
+  status: string;
   message: string;
-  data: RouteStatusData;
 }
 
-// ── API calls ─────────────────────────────────────────────────────────────────
+export interface TrackLocationRequest extends Coordinate {
+  timestamp: number;
+  currentSpeed: number;
+}
 
-export async function postGenerateRoute(
-  req: GenerateRouteRequest,
-): Promise<GenerateRouteResponse> {
-  console.log('[Route Generate] 요청 데이터:', JSON.stringify(req, null, 2));
-  let res: Response;
+export interface TrackLocationData {
+  onRoute: boolean;
+  distanceRemaining: number;
+  completionRate: number;
+  warningMessage?: string;
+}
+
+export interface SaveRecordRequest {
+  sessionId: string;
+  routeId: string;
+  gpsPoints: Array<Coordinate & {timestamp: number}>;
+  totalTimeSeconds: number;
+}
+
+export interface SaveRecordData {
+  recordId: string;
+  totalDistanceMeters: number;
+  totalTimeSeconds: number;
+  averageSpeed: number;
+  imageUrl: string;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/api/v1/routes/generate`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(req),
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...init?.headers,
+      },
     });
-  } catch (networkErr: any) {
-    throw new Error(`서버 연결 실패 (${API_BASE_URL})\n${networkErr.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown network error';
+    throw new Error(`서버 연결 실패: ${message}`);
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${body || '서버 오류'}`);
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${body || 'API 요청 실패'}`);
   }
-  return res.json();
+
+  return response.json();
 }
 
-export async function fetchRouteStatus(
-  taskId: string,
-): Promise<RouteStatusResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/routes/status/${taskId}`);
-  if (!res.ok) {
-    throw new Error(`상태 조회 실패: HTTP ${res.status}`);
-  }
-  return res.json();
+export function generateRoute(request: GenerateRouteRequest) {
+  return requestJson<ApiResponse<GenerateRouteData>>('/api/v1/routes/generate', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function getRouteStatus(taskId: string) {
+  return requestJson<ApiResponse<RouteStatusData>>(`/api/v1/routes/status/${taskId}`);
+}
+
+export function startSession(routeId: string) {
+  return requestJson<ApiResponse<StartSessionData>>('/api/v1/session/start', {
+    method: 'POST',
+    body: JSON.stringify({routeId}),
+  });
+}
+
+export function trackLocation(sessionId: string, request: TrackLocationRequest) {
+  return requestJson<ApiResponse<TrackLocationData>>(`/api/v1/session/${sessionId}/track`, {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function saveRecord(request: SaveRecordRequest) {
+  return requestJson<ApiResponse<SaveRecordData>>('/api/v1/records/save', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
 }

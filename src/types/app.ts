@@ -16,7 +16,15 @@ export interface Preferences {
   voiceCoach: boolean;
 }
 
+export interface ProfileSummary {
+  totalRuns: number;
+  totalDistanceKm: number;
+  totalTimeSeconds: number;
+  averagePaceMinPerKm: number;
+}
+
 export interface RouteStats {
+  routeId?: string;
   distKm: string;
   duration: string;
   matchPct: number;
@@ -37,4 +45,9 @@ export interface SavedRun {
   description?: string;
   tags?: string[];
   startCoord?: Coordinate;
+  recordId?: string;
+  routeId?: string;
+  communityRouteId?: string;
+  imageUrl?: string;
+  createdAt?: string;
 }

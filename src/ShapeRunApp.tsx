@@ -16,12 +16,40 @@ import {
 } from 'lucide-react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import WebView, {WebViewMessageEvent} from 'react-native-webview';
+import {
+  login,
+  logout,
+  signup,
+  withdraw,
+} from './api/authApi';
+import type {AuthResponse} from './api/authApi';
+import {
+  deleteMyRecord,
+  getLikedRoutes,
+  getMe,
+  getMyRecord,
+  getMyRecords,
+  getMySharedRoutes,
+  getSummary,
+  updateMe,
+} from './api/userApi';
+import type {
+  CommunityRouteResponse,
+  MyPageSummaryResponse,
+  RecordDetailResponse,
+} from './api/userApi';
+import {
+  generateRoute,
+  getRouteStatus,
+  saveRecord,
+  startSession,
+  trackLocation,
+} from './api/routeApi';
 import {MAP_HTML} from './mapHtml';
 import {SHAPES} from './shapes';
 import {NAVER_MAP_WEB_BASE_URL} from './config';
 import {FooterItem} from './components/AppChrome';
 import {
-  ACTIVITY_PROFILES,
   COMMUNITY_RUNS,
   INITIAL_RUNS,
 } from './constants/appData';
@@ -37,7 +65,9 @@ import type {
   Activity,
   AuthMode,
   CommunityFilter,
+  Coordinate,
   Preferences,
+  ProfileSummary,
   RoutePhase,
   RouteStats,
   SavedRun,
@@ -52,11 +82,87 @@ const SHEET_COLLAPSED_VISIBLE_HEIGHT = 188;
 const FOOTER_BASE_HEIGHT = 66;
 type SheetSnap = 'expanded' | 'middle' | 'collapsed';
 
+const ROUTE_STATUS_DONE = new Set(['COMPLETED', 'COMPLETE', 'DONE', 'SUCCESS']);
+const ROUTE_STATUS_FAILED = new Set(['FAILED', 'FAIL', 'ERROR']);
+const SHAPE_API_TYPES: Record<string, string> = {
+  star: 'STAR',
+  heart: 'HEART',
+  circle: 'CIRCLE',
+  dog: 'DOG',
+  cat: 'CAT',
+};
+const ACTIVITY_API_TYPES: Record<Activity, string> = {
+  Running: 'RUNNING',
+  Walking: 'WALKING',
+  Cycling: 'CYCLING',
+};
+const START_DISTANCE_LIMIT_KM = 0.2;
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(() => resolve(), ms));
+
+const formatPaceFromRecord = (distanceMeters?: number, totalTimeSeconds?: number) => {
+  if (!distanceMeters || !totalTimeSeconds) return '-';
+  const paceSeconds = totalTimeSeconds / (distanceMeters / 1000);
+  const minutes = Math.floor(paceSeconds / 60);
+  const seconds = Math.round(paceSeconds % 60)
+    .toString()
+    .padStart(2, '0');
+  return `${minutes}'${seconds}"`;
+};
+
+const firstPoint = (points?: Coordinate[]) =>
+  Array.isArray(points) && points.length > 0 ? points[0] : undefined;
+
+const recordToSavedRun = (
+  record: RecordDetailResponse,
+  sharedRouteIds: Set<string>,
+  author: string,
+): SavedRun => {
+  const routeId = record.routeId || '';
+  return {
+    id: record.recordId,
+    recordId: record.recordId,
+    routeId,
+    shape: routeId ? `루트 ${routeId.slice(0, 4)}` : '완주',
+    distance: `${((record.totalDistanceMeters || 0) / 1000).toFixed(1)} km`,
+    pace: formatPaceFromRecord(record.totalDistanceMeters, record.totalTimeSeconds),
+    matchPct: 100,
+    shared: routeId ? sharedRouteIds.has(routeId) : false,
+    author,
+    location: '내 완주 루트',
+    likes: 0,
+    description: '서버에 저장된 완주 기록입니다.',
+    tags: ['완주 기록', '서버 동기화'],
+    startCoord: firstPoint(record.actualPolyline) || firstPoint(record.plannedPolyline),
+    imageUrl: record.imageUrl,
+    createdAt: record.createdAt,
+  };
+};
+
+const communityRouteToSavedRun = (route: CommunityRouteResponse): SavedRun => ({
+  id: route.communityRouteId,
+  communityRouteId: route.communityRouteId,
+  routeId: route.routeId,
+  shape: route.title || '커뮤니티 루트',
+  distance: `${((route.distanceMeters || 0) / 1000).toFixed(1)} km`,
+  pace: formatPaceFromRecord(route.distanceMeters, route.totalTimeSeconds),
+  matchPct: 100,
+  shared: true,
+  author: route.author?.nickname || route.author?.email || '커뮤니티 러너',
+  location: '커뮤니티 루트',
+  likes: route.likeCount || 0,
+  description: route.description,
+  tags: route.liked ? ['좋아요', '커뮤니티'] : ['공유', '커뮤니티'],
+  startCoord: firstPoint(route.polyline),
+  imageUrl: route.imageUrl,
+  createdAt: route.createdAt,
+});
+
 export default function ShapeRunApp() {
   const insets = useSafeAreaInsets();
   const {height: windowHeight} = useWindowDimensions();
   const webViewRef = useRef<WebView>(null);
-  const runTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runWatchId = useRef<number | null>(null);
+  const runStartedAt = useRef<number | null>(null);
   const sheetOffset = useRef(new Animated.Value(520)).current;
   const sheetOffsetPosition = useRef(520);
 
@@ -77,6 +183,8 @@ export default function ShapeRunApp() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [routeStats, setRouteStats] = useState<RouteStats | null>(null);
   const [routePhase, setRoutePhase] = useState<RoutePhase>('idle');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [gpsPoints, setGpsPoints] = useState<Array<Coordinate & {timestamp: number}>>([]);
   const [runProgress, setRunProgress] = useState(0);
   const [currentPace, setCurrentPace] = useState(5.8);
   const [currentBpm, setCurrentBpm] = useState(156);
@@ -93,6 +201,12 @@ export default function ShapeRunApp() {
     Record<string, {liked: boolean}>
   >({});
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authSession, setAuthSession] = useState<AuthResponse | null>(null);
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSummary, setProfileSummary] = useState<ProfileSummary | null>(null);
+  const [serverLikedRuns, setServerLikedRuns] = useState<SavedRun[]>([]);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [authName, setAuthName] = useState('Art Runner');
   const [authEmail, setAuthEmail] = useState('runner@artrun.app');
@@ -124,7 +238,9 @@ export default function ShapeRunApp() {
 
   useEffect(() => {
     return () => {
-      if (runTimer.current) clearInterval(runTimer.current);
+      if (runWatchId.current !== null) {
+        Geolocation.clearWatch(runWatchId.current);
+      }
     };
   }, []);
 
@@ -139,12 +255,40 @@ export default function ShapeRunApp() {
     sheetOffset.setValue(target);
   }, [sheetCollapsedOffset, sheetMiddleOffset, sheetOffset, sheetSnap]);
 
-  const finishRun = useCallback(() => {
-    if (runTimer.current) clearInterval(runTimer.current);
+  const finishRun = useCallback(async () => {
+    if (runWatchId.current !== null) {
+      Geolocation.clearWatch(runWatchId.current);
+      runWatchId.current = null;
+    }
     setRoutePhase('complete');
     setVoiceCue('러닝을 완료했습니다. 루트 완주 기록이 저장되었습니다.');
     const completedRunId = `r${Date.now()}`;
     setLastCompletedRunId(completedRunId);
+    const totalTimeSeconds = runStartedAt.current
+      ? Math.max(1, Math.round((Date.now() - runStartedAt.current) / 1000))
+      : Math.round(distance * targetPace * 60);
+    let savedRecord: {recordId?: string; imageUrl?: string} = {};
+
+    if (sessionId && routeStats?.routeId) {
+      try {
+        const response = await saveRecord({
+          sessionId,
+          routeId: routeStats.routeId,
+          gpsPoints: gpsPoints.length
+            ? gpsPoints
+            : routeStats.routePoints.map(point => ({...point, timestamp: Date.now()})),
+          totalTimeSeconds,
+        });
+        savedRecord = {
+          recordId: response.data.recordId,
+          imageUrl: response.data.imageUrl,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '기록 저장 API 호출에 실패했습니다.';
+        setVoiceCue(`완주는 완료했지만 서버 기록 저장에 실패했습니다. ${message}`);
+      }
+    }
+
     setSavedRuns(prev => {
       const newRun: SavedRun = {
         id: completedRunId,
@@ -161,50 +305,113 @@ export default function ShapeRunApp() {
         description: `${shapeNameFromKey(selectedShape, shapePrompt)} 모양으로 완주한 ${distance.toFixed(1)}km 러닝 아트 루트입니다.`,
         tags: ['완주 인증', '내 기록', shapeNameFromKey(selectedShape, shapePrompt)],
         startCoord,
+        recordId: savedRecord.recordId,
+        imageUrl: savedRecord.imageUrl,
       };
       return [newRun, ...prev];
     });
-  }, [authName, distance, routeStats?.matchPct, selectedShape, shapePrompt, startCoord, targetPace]);
+    setSessionId(null);
+  }, [
+    authName,
+    distance,
+    gpsPoints,
+    routeStats,
+    selectedShape,
+    sessionId,
+    shapePrompt,
+    startCoord,
+    targetPace,
+  ]);
 
   useEffect(() => {
-    if (routePhase !== 'running') return;
+    if (routePhase !== 'running' || !sessionId) return;
 
-    runTimer.current = setInterval(() => {
-      setRunProgress(prev => {
-        const next = Math.min(1, prev + 0.035);
-        const paceDrift = Math.sin(next * Math.PI * 5) * 0.35;
-        const nextPace = Number((targetPace + paceDrift).toFixed(2));
-        const nextBpm =
-          nextPace > targetPace + 0.15
+    runWatchId.current = Geolocation.watchPosition(
+      position => {
+        const {latitude, longitude, speed} = position.coords;
+        const currentPoint = {lat: latitude, lng: longitude};
+        const timestamp = position.timestamp || Date.now();
+        const gpsPoint = {...currentPoint, timestamp};
+        const speedMps = typeof speed === 'number' && speed > 0 ? speed : 0;
+        const pace = speedMps > 0 ? Math.max(3, Math.min(12, 1000 / speedMps / 60)) : targetPace;
+
+        setGpsPoints(points => [...points, gpsPoint]);
+        setCurrentPace(Number(pace.toFixed(2)));
+        setCurrentBpm(
+          pace > targetPace + 0.15
             ? 164
-            : nextPace < targetPace - 0.15
+            : pace < targetPace - 0.15
               ? 148
-              : 156;
+              : 156,
+        );
+        webViewRef.current?.postMessage(
+          JSON.stringify({type: 'UPDATE_RUNNER', location: currentPoint}),
+        );
 
-        setCurrentPace(nextPace);
-        setCurrentBpm(nextBpm);
+        trackLocation(sessionId, {
+          ...currentPoint,
+          timestamp,
+          currentSpeed: speedMps,
+        })
+          .then(response => {
+            const data = response.data;
+            const completionRate = Number(data.completionRate || 0);
+            const nextProgress = completionRate > 1 ? completionRate / 100 : completionRate;
 
-        if (next >= 1) {
-          finishRun();
-          return 1;
-        }
-        if (prev < 0.5 && next >= 0.5) {
-          setVoiceCue(`${shapeNameFromKey(selectedShape, shapePrompt)}의 반을 완성했습니다.`);
-        } else if (nextPace > targetPace + 0.15) {
-          setVoiceCue('목표보다 빠릅니다. BPM을 낮춰 호흡을 안정시킵니다.');
-        } else if (nextPace < targetPace - 0.15) {
-          setVoiceCue('목표보다 느립니다. BPM을 높여 리듬을 끌어올립니다.');
-        } else {
-          setVoiceCue('목표 페이스를 유지하고 있습니다.');
-        }
-        return next;
-      });
-    }, 1000);
+            if (Number.isFinite(nextProgress)) {
+              setRunProgress(prev => {
+                const normalized = Math.min(1, Math.max(prev, nextProgress));
+                if (prev < 0.5 && normalized >= 0.5) {
+                  setVoiceCue(`${shapeNameFromKey(selectedShape, shapePrompt)}의 반을 완성했습니다.`);
+                }
+                return normalized;
+              });
+            }
+
+            if (!data.onRoute && data.warningMessage) {
+              setVoiceCue(data.warningMessage);
+            } else if (data.warningMessage) {
+              setVoiceCue(data.warningMessage);
+            } else if (data.distanceRemaining > 0) {
+              setVoiceCue(`남은 거리 ${Math.round(data.distanceRemaining)}m입니다.`);
+            } else {
+              setVoiceCue('목표 페이스를 유지하고 있습니다.');
+            }
+
+            if (nextProgress >= 1 || data.distanceRemaining <= 10) {
+              finishRun();
+            }
+          })
+          .catch(error => {
+            const message = error instanceof Error ? error.message : '위치 검증 실패';
+            setVoiceCue(`위치 검증에 실패했습니다. ${message}`);
+          });
+      },
+      () => {
+        setVoiceCue('GPS 위치를 가져오지 못했습니다. 위치 권한과 신호를 확인해 주세요.');
+      },
+      {
+        enableHighAccuracy: true,
+        distanceFilter: 5,
+        interval: 3000,
+        fastestInterval: 1500,
+      },
+    );
 
     return () => {
-      if (runTimer.current) clearInterval(runTimer.current);
+      if (runWatchId.current !== null) {
+        Geolocation.clearWatch(runWatchId.current);
+        runWatchId.current = null;
+      }
     };
-  }, [finishRun, routePhase, selectedShape, shapePrompt, targetPace]);
+  }, [
+    finishRun,
+    routePhase,
+    selectedShape,
+    sessionId,
+    shapePrompt,
+    targetPace,
+  ]);
 
   const activeShapeKey = useMemo(
     () => (shapePrompt.trim() ? inferPresetFromPrompt(shapePrompt) : selectedShape),
@@ -232,8 +439,9 @@ export default function ShapeRunApp() {
   );
   const likedCommunityRuns = useMemo(() => {
     const communityRuns = [...COMMUNITY_RUNS, ...savedRuns.filter(run => run.shared)];
-    return communityRuns.filter(run => communityActions[run.id]?.liked);
-  }, [communityActions, savedRuns]);
+    const localLikedRuns = communityRuns.filter(run => communityActions[run.id]?.liked);
+    return [...serverLikedRuns, ...localLikedRuns];
+  }, [communityActions, savedRuns, serverLikedRuns]);
 
   const animateSheetTo = useCallback(
     (toValue: number) => {
@@ -330,33 +538,96 @@ export default function ShapeRunApp() {
     [distance, postToMap, selectedShape, shapePrompt, startCoord],
   );
 
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!mapReady || isGenerating) return;
 
     const shapeKey = activeShapeKey in SHAPES ? activeShapeKey : selectedShape;
-    const shape = SHAPES[shapeKey] || SHAPES.star;
     setRouteStats(null);
     setRoutePhase('idle');
     setRunProgress(0);
     setIsGenerating(true);
+    setSessionId(null);
+    setGpsPoints([]);
     setVoiceCue('AI가 모양과 거리에 맞는 러닝 루트를 설계하고 있습니다.');
 
-    postToMap({
-      type: 'GENERATE',
-      shapePts: shape.points,
-      targetKm: distance,
-      profile: ACTIVITY_PROFILES[activity],
-      startLat: startCoord.lat,
-      startLng: startCoord.lng,
-    });
+    try {
+      const generateResponse = await generateRoute({
+        requestText: shapePrompt,
+        shapeType: SHAPE_API_TYPES[shapeKey] || shapePrompt,
+        activityType: ACTIVITY_API_TYPES[activity],
+        targetDistanceKm: distance,
+        startPoint: startCoord,
+        preferences: {
+          avoidMainRoad: preferences.avoidMainRoad,
+          preferPark: preferences.preferPark,
+        },
+      });
+      const taskId = generateResponse.data.taskId;
+      setVoiceCue(generateResponse.data.message || '경로 생성 작업이 시작되었습니다.');
+
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await sleep(attempt === 0 ? 700 : 1500);
+        const statusResponse = await getRouteStatus(taskId);
+        const status = statusResponse.data.status?.toUpperCase?.() || '';
+
+        if (ROUTE_STATUS_FAILED.has(status)) {
+          throw new Error(statusResponse.data.errorMessage || '경로 생성에 실패했습니다.');
+        }
+
+        if (ROUTE_STATUS_DONE.has(status)) {
+          const candidate = statusResponse.data.candidateRoutes?.[0];
+          if (!candidate || !candidate.polyline?.length) {
+            throw new Error('생성된 후보 경로가 없습니다.');
+          }
+
+          const shapeLabel = shapeNameFromKey(selectedShape, shapePrompt);
+          const routeDistanceKm = candidate.distance || distance;
+          postToMap({
+            type: 'DRAW_ROUTE',
+            points: candidate.polyline,
+            startLat: startCoord.lat,
+            startLng: startCoord.lng,
+          });
+          setRouteStats({
+            routeId: candidate.routeId,
+            distKm: routeDistanceKm.toFixed(2),
+            duration: formatDuration(null, routeDistanceKm),
+            matchPct: Math.round(
+              candidate.similarityScore <= 1
+                ? candidate.similarityScore * 100
+                : candidate.similarityScore || 90,
+            ),
+            shapeLabel,
+            routePoints: candidate.polyline,
+          });
+          setRoutePhase('ready');
+          setVoiceCue(`${shapeLabel} ${routeDistanceKm.toFixed(1)}km 루트가 준비되었습니다.`);
+          setIsGenerating(false);
+          return;
+        }
+
+        setVoiceCue(`경로 생성 중입니다. 상태: ${status || 'PROCESSING'}`);
+      }
+
+      throw new Error('경로 생성 시간이 초과되었습니다.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '경로 생성 API 호출에 실패했습니다.';
+      setIsGenerating(false);
+      setRoutePhase('idle');
+      Alert.alert('경로 생성 실패', message);
+      setVoiceCue('경로 생성에 실패했습니다. 조건을 조정해 다시 시도해 주세요.');
+    }
   }, [
     activeShapeKey,
     activity,
     distance,
     isGenerating,
     mapReady,
+    preferences.avoidMainRoad,
+    preferences.preferPark,
     postToMap,
     selectedShape,
+    shapePrompt,
     startCoord,
   ]);
 
@@ -372,6 +643,8 @@ export default function ShapeRunApp() {
     setRouteStats(null);
     setRoutePhase('idle');
     setRunProgress(0);
+    setSessionId(null);
+    setGpsPoints([]);
     setVoiceCue('홈에서 선택한 조건으로 빠르게 루트를 생성합니다.');
     setPendingQuickGenerate(true);
     setActiveTab('run');
@@ -382,23 +655,62 @@ export default function ShapeRunApp() {
     handleGenerate();
   }, [handleGenerate]);
 
-  const handleStartRun = useCallback(() => {
-    if (!routeStats) return;
-    setActiveTab('run');
-    setRoutePhase('running');
-    setSheetSnap('expanded');
-    setRunProgress(0);
-    setShareCardSaved(false);
-    setLastCompletedRunId(null);
-    setCurrentPace(targetPace);
-    setCurrentBpm(156);
-    setVoiceCue(`${routeStats.shapeLabel} 러닝을 시작합니다. 첫 구간은 목표 페이스로 진입하세요.`);
-  }, [routeStats, targetPace]);
+  const handleStartRun = useCallback(async () => {
+    if (!routeStats?.routeId) {
+      Alert.alert('러닝 시작 불가', '서버에서 생성된 경로를 먼저 선택해야 합니다.');
+      return;
+    }
+
+    try {
+      const currentPosition = await new Promise<Coordinate>((resolve, reject) => {
+        Geolocation.getCurrentPosition(
+          position =>
+            resolve({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            }),
+          reject,
+          {enableHighAccuracy: true, timeout: 12000, maximumAge: 5000},
+        );
+      });
+      const routeStart = routeStats.routePoints[0] || startCoord;
+      const startDistanceKm = distanceBetweenCoords(currentPosition, routeStart);
+
+      if (startDistanceKm > START_DISTANCE_LIMIT_KM) {
+        Alert.alert(
+          '출발지와 거리가 멉니다',
+          `현재 위치가 루트 시작점에서 약 ${(startDistanceKm * 1000).toFixed(0)}m 떨어져 있습니다. 시작점 근처에서 러닝을 시작해 주세요.`,
+        );
+        return;
+      }
+
+      const response = await startSession(routeStats.routeId);
+      setSessionId(response.data.sessionId);
+      setActiveTab('run');
+      setRoutePhase('running');
+      setSheetSnap('expanded');
+      setRunProgress(0);
+      setGpsPoints([]);
+      setGpsPoints([{...currentPosition, timestamp: Date.now()}]);
+      setShareCardSaved(false);
+      setLastCompletedRunId(null);
+      setCurrentPace(targetPace);
+      setCurrentBpm(156);
+      runStartedAt.current = Date.now();
+      postToMap({type: 'UPDATE_RUNNER', location: currentPosition});
+      setVoiceCue(response.data.message || `${routeStats.shapeLabel} 러닝을 시작합니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'GPS 확인 또는 세션 시작에 실패했습니다.';
+      Alert.alert('러닝 시작 실패', message);
+    }
+  }, [postToMap, routeStats, startCoord, targetPace]);
 
   const handleNewRun = useCallback(() => {
     setRoutePhase('idle');
     setRouteStats(null);
     setRunProgress(0);
+    setSessionId(null);
+    setGpsPoints([]);
     setShareCardSaved(false);
     setLastCompletedRunId(null);
     setVoiceCue('새 러닝 루트를 생성할 준비가 되었습니다.');
@@ -509,48 +821,279 @@ export default function ShapeRunApp() {
     [prepareCommunityRoute, startCoord],
   );
 
-  const handleAuthSubmit = useCallback(() => {
+  const loadUserProfileData = useCallback(
+    async (accessToken = authSession?.accessToken) => {
+      if (!accessToken) return;
+
+      setIsProfileLoading(true);
+      setProfileError(null);
+      try {
+        const [meResult, summaryResult, recordsResult, sharedResult, likedResult] =
+          await Promise.allSettled([
+            getMe(accessToken),
+            getSummary(accessToken),
+            getMyRecords(accessToken, {page: 0, size: 50, sort: ['createdAt,desc']}),
+            getMySharedRoutes(accessToken, {page: 0, size: 50, sort: ['createdAt,desc']}),
+            getLikedRoutes(accessToken, {page: 0, size: 50, sort: ['createdAt,desc']}),
+          ]);
+
+        let nextName = authName;
+
+        if (meResult.status === 'fulfilled') {
+          nextName = meResult.value.data.nickname || meResult.value.data.email;
+          setAuthName(nextName);
+          setAuthEmail(meResult.value.data.email);
+        }
+
+        if (summaryResult.status === 'fulfilled') {
+          const summary = summaryResult.value.data as MyPageSummaryResponse;
+          setProfileSummary({
+            totalRuns: summary.totalRuns,
+            totalDistanceKm: summary.totalDistanceKm,
+            totalTimeSeconds: summary.totalTimeSeconds,
+            averagePaceMinPerKm: summary.averagePaceMinPerKm,
+          });
+          nextName = summary.user.nickname || summary.user.email || nextName;
+          setAuthName(nextName);
+          setAuthEmail(summary.user.email);
+        }
+
+        const sharedRoutes =
+          sharedResult.status === 'fulfilled' ? sharedResult.value.data.content : [];
+        const sharedRouteIds = new Set(
+          sharedRoutes.map(route => route.routeId).filter(Boolean) as string[],
+        );
+
+        if (recordsResult.status === 'fulfilled') {
+          setSavedRuns(
+            recordsResult.value.data.content.map(record =>
+              recordToSavedRun(record, sharedRouteIds, nextName),
+            ),
+          );
+        }
+
+        if (likedResult.status === 'fulfilled') {
+          setServerLikedRuns(
+            likedResult.value.data.content.map(route => communityRouteToSavedRun(route)),
+          );
+        }
+
+        const failures = [
+          meResult,
+          summaryResult,
+          recordsResult,
+          sharedResult,
+          likedResult,
+        ].filter(result => result.status === 'rejected');
+
+        if (failures.length > 0) {
+          setProfileError('일부 프로필 데이터를 불러오지 못했습니다.');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '프로필 조회에 실패했습니다.';
+        setProfileError(message);
+      } finally {
+        setIsProfileLoading(false);
+      }
+    },
+    [authName, authSession?.accessToken],
+  );
+
+  const applyAuthSession = useCallback((session: AuthResponse) => {
+    setAuthSession(session);
     setIsAuthenticated(true);
+    setAuthName(session.user.nickname || session.user.email);
+    setAuthEmail(session.user.email);
     setAuthMode('login');
     setAuthPassword('');
     setActiveTab('home');
+    loadUserProfileData(session.accessToken);
+  }, [loadUserProfileData]);
+
+  const handleAuthSubmit = useCallback(async () => {
+    const email = authEmail.trim();
+    const password = authPassword;
+    const nickname = authName.trim();
+
+    if (!email || !password || (authMode === 'signup' && !nickname)) {
+      Alert.alert('입력 확인', '이메일, 비밀번호, 닉네임을 입력해 주세요.');
+      return;
+    }
+
+    if (authMode === 'signup' && password.length < 8) {
+      Alert.alert('입력 확인', '비밀번호는 8자 이상이어야 합니다.');
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    try {
+      const response =
+        authMode === 'signup'
+          ? await signup({email, password, nickname})
+          : await login({email, password});
+      applyAuthSession(response.data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '인증 요청에 실패했습니다.';
+      Alert.alert(authMode === 'signup' ? '회원가입 실패' : '로그인 실패', message);
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }, [applyAuthSession, authEmail, authMode, authName, authPassword]);
+
+  const handleSocialLogin = useCallback((provider: 'KAKAO' | 'GOOGLE') => {
+    Alert.alert(
+      '소셜 로그인 보류',
+      `${provider === 'KAKAO' ? '카카오' : 'Google'} SDK 토큰 발급 연동이 필요해서 API 호출은 보류했습니다.`,
+    );
   }, []);
+
+  const handleRefreshProfile = useCallback(() => {
+    loadUserProfileData();
+  }, [loadUserProfileData]);
+
+  const handleUpdateProfile = useCallback(
+    async (nickname: string) => {
+      const nextNickname = nickname.trim();
+      if (!nextNickname) {
+        Alert.alert('입력 확인', '닉네임을 입력해 주세요.');
+        return;
+      }
+      if (!authSession?.accessToken) return;
+
+      setIsProfileLoading(true);
+      try {
+        const response = await updateMe(authSession.accessToken, {nickname: nextNickname});
+        setAuthName(response.data.nickname || nextNickname);
+        setAuthEmail(response.data.email);
+        Alert.alert('프로필 수정 완료', response.message || '내 정보가 수정되었습니다.');
+        await loadUserProfileData(authSession.accessToken);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '프로필 수정에 실패했습니다.';
+        Alert.alert('프로필 수정 실패', message);
+      } finally {
+        setIsProfileLoading(false);
+      }
+    },
+    [authSession?.accessToken, loadUserProfileData],
+  );
+
+  const handleSelectProfileRun = useCallback(
+    async (id: string | null) => {
+      setSelectedProfileRunId(id);
+      const targetRun = id ? savedRuns.find(run => run.id === id) : null;
+      if (!targetRun?.recordId || !authSession?.accessToken) return;
+
+      try {
+        const response = await getMyRecord(authSession.accessToken, targetRun.recordId);
+        setSavedRuns(prev =>
+          prev.map(run =>
+            run.id === id
+              ? {
+                  ...run,
+                  ...recordToSavedRun(
+                    response.data,
+                    new Set(prev.filter(item => item.shared).map(item => item.routeId || '')),
+                    authName,
+                  ),
+                  shared: run.shared,
+                }
+              : run,
+          ),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '기록 상세 조회에 실패했습니다.';
+        setProfileError(message);
+      }
+    },
+    [authName, authSession?.accessToken, savedRuns],
+  );
+
+  const handleDeleteMyRecord = useCallback(
+    (id: string) => {
+      const targetRun = savedRuns.find(run => run.id === id);
+      if (!targetRun?.recordId || !authSession?.accessToken) {
+        Alert.alert('삭제 불가', '서버에 저장된 기록만 삭제할 수 있습니다.');
+        return;
+      }
+
+      Alert.alert('완주 기록 삭제', '이 기록을 삭제할까요?', [
+        {text: '취소', style: 'cancel'},
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteMyRecord(authSession.accessToken, targetRun.recordId as string);
+              setSavedRuns(prev => prev.filter(run => run.id !== id));
+              setSelectedProfileRunId(null);
+              await loadUserProfileData(authSession.accessToken);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : '기록 삭제에 실패했습니다.';
+              Alert.alert('기록 삭제 실패', message);
+            }
+          },
+        },
+      ]);
+    },
+    [authSession?.accessToken, loadUserProfileData, savedRuns],
+  );
 
   const handleLogout = useCallback(() => {
     Alert.alert('로그아웃', '현재 계정에서 로그아웃할까요?', [
       {text: '취소', style: 'cancel'},
       {
         text: '로그아웃',
-        onPress: () => {
+        onPress: async () => {
+          try {
+            await logout(authSession?.accessToken);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '로그아웃 API 호출 실패';
+            Alert.alert('로그아웃 API 실패', `${message}\n\n앱에서는 로그아웃 상태로 전환합니다.`);
+          }
+          setAuthSession(null);
           setIsAuthenticated(false);
           setAuthMode('login');
           setAuthPassword('');
+          setProfileSummary(null);
+          setProfileError(null);
+          setServerLikedRuns([]);
           setSelectedProfileRunId(null);
         },
       },
     ]);
-  }, []);
+  }, [authSession?.accessToken]);
 
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
       '회원탈퇴',
-      '계정과 러닝 기록이 삭제되는 흐름입니다. 지금은 API 연결 전이라 화면 상태만 초기화합니다.',
+      '계정과 러닝 기록이 삭제됩니다. 계속할까요?',
       [
         {text: '취소', style: 'cancel'},
         {
           text: '탈퇴',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              await withdraw(authSession?.accessToken);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : '회원탈퇴 API 호출 실패';
+              Alert.alert('회원탈퇴 실패', message);
+              return;
+            }
+            setAuthSession(null);
             setIsAuthenticated(false);
             setAuthMode('signup');
             setAuthPassword('');
             setSavedRuns(INITIAL_RUNS);
+            setProfileSummary(null);
+            setProfileError(null);
+            setServerLikedRuns([]);
             setSelectedProfileRunId(null);
           },
         },
       ],
     );
-  }, []);
+  }, [authSession?.accessToken]);
 
   const renderPlan = () => (
     <RunPlanScreen
@@ -662,11 +1205,13 @@ export default function ShapeRunApp() {
       authName={authName}
       authEmail={authEmail}
       authPassword={authPassword}
+      isSubmitting={isAuthSubmitting}
       onChangeAuthMode={setAuthMode}
       onChangeName={setAuthName}
       onChangeEmail={setAuthEmail}
       onChangePassword={setAuthPassword}
       onSubmit={handleAuthSubmit}
+      onSocialLogin={handleSocialLogin}
     />
   );
 
@@ -676,11 +1221,17 @@ export default function ShapeRunApp() {
       authEmail={authEmail}
       savedRuns={savedRuns}
       likedRuns={likedCommunityRuns}
+      summary={profileSummary}
+      isLoading={isProfileLoading}
+      errorMessage={profileError}
       preferences={preferences}
       selectedRunId={selectedProfileRunId}
-      onSelectRun={setSelectedProfileRunId}
+      onSelectRun={handleSelectProfileRun}
       onToggleShare={toggleShare}
       onRegisterCommunity={handleRegisterCompletedRun}
+      onDeleteRun={handleDeleteMyRecord}
+      onRefresh={handleRefreshProfile}
+      onUpdateProfile={handleUpdateProfile}
       onChangePreferences={setPreferences}
       onLogout={handleLogout}
       onDeleteAccount={handleDeleteAccount}
