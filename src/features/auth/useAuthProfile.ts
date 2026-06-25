@@ -14,7 +14,10 @@ import {
 } from '../../api/userApi';
 import type {MyPageSummaryResponse} from '../../api/userApi';
 import {INITIAL_RUNS} from '../../constants/appData';
-import {communityRouteToSavedRun, recordToSavedRun} from '../profile/profileMappers';
+import {
+  likedRouteToSavedRun,
+  recordToSavedRun,
+} from '../profile/profileMappers';
 import type {
   AuthMode,
   ProfileSummary,
@@ -81,25 +84,24 @@ export function useAuthProfile({
         if (summaryResult.status === 'fulfilled') {
           const summary = summaryResult.value.data as MyPageSummaryResponse;
           setProfileSummary({
-            totalRuns: summary.totalRuns,
+            totalRuns: summary.totalRunCount,
             totalDistanceKm: summary.totalDistanceKm,
-            totalTimeSeconds: summary.totalTimeSeconds,
-            averagePaceMinPerKm: summary.averagePaceMinPerKm,
+            totalTimeSeconds: 0,
+            averagePaceMinPerKm: 0,
           });
-          nextName = summary.user.nickname || summary.user.email || nextName;
+          nextName = summary.nickname || nextName;
           setAuthName(nextName);
-          setAuthEmail(summary.user.email);
         }
 
         const sharedRoutes =
-          sharedResult.status === 'fulfilled' ? sharedResult.value.data.content : [];
+          sharedResult.status === 'fulfilled' ? sharedResult.value.data.routes : [];
         const sharedRouteIds = new Set(
           sharedRoutes.map(route => route.routeId).filter(Boolean) as string[],
         );
 
         if (recordsResult.status === 'fulfilled') {
           setSavedRuns(
-            recordsResult.value.data.content.map(record =>
+            recordsResult.value.data.records.map(record =>
               recordToSavedRun(record, sharedRouteIds, nextName),
             ),
           );
@@ -107,7 +109,7 @@ export function useAuthProfile({
 
         if (likedResult.status === 'fulfilled') {
           setServerLikedRuns(
-            likedResult.value.data.content.map(route => communityRouteToSavedRun(route)),
+            likedResult.value.data.routes.map(route => likedRouteToSavedRun(route)),
           );
         }
 
@@ -196,7 +198,9 @@ export function useAuthProfile({
       try {
         const response = await updateMe(authSession.accessToken, {nickname: nextNickname});
         setAuthName(response.data.nickname || nextNickname);
-        setAuthEmail(response.data.email);
+        if ('email' in response.data && response.data.email) {
+          setAuthEmail(response.data.email);
+        }
         Alert.alert('프로필 수정 완료', response.message || '내 정보가 수정되었습니다.');
         await loadUserProfileData(authSession.accessToken);
       } catch (error) {

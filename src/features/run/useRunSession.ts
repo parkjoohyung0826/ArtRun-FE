@@ -83,6 +83,22 @@ export function useRunSession({
     }
   }, []);
 
+  const getCurrentPoint = useCallback(
+    () =>
+      new Promise<Coordinate>((resolve, reject) => {
+        Geolocation.getCurrentPosition(
+          position =>
+            resolve({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            }),
+          reject,
+          {enableHighAccuracy: true, timeout: 12000, maximumAge: 5000},
+        );
+      }),
+    [],
+  );
+
   const finishRun = useCallback(async () => {
     clearRunWatch();
     setRoutePhase('complete');
@@ -96,7 +112,6 @@ export function useRunSession({
 
     if (sessionId && routeStats?.routeId) {
       try {
-        await finishSession(accessToken, sessionId);
         const recordPoints =
           gpsPoints.length >= 2
             ? gpsPoints
@@ -109,11 +124,20 @@ export function useRunSession({
           throw new Error('기록 저장에 필요한 GPS 포인트가 부족합니다.');
         }
 
+        const lastPoint = recordPoints[recordPoints.length - 1];
+        await finishSession(accessToken, sessionId, {
+          currentPoint: lastPoint,
+          totalTimeSeconds,
+          gpsPoints: recordPoints,
+        });
+
         const response = await saveRecord(accessToken, {
           sessionId,
           routeId: routeStats.routeId,
           gpsPoints: recordPoints,
           totalTimeSeconds,
+          averagePaceSecPerKm: Math.round(targetPace * 60),
+          averageBpm: currentBpm,
         });
         savedRecord = {
           recordId: response.data.recordId,
@@ -152,6 +176,7 @@ export function useRunSession({
     accessToken,
     authName,
     clearRunWatch,
+    currentBpm,
     distance,
     gpsPoints,
     routeStats,
@@ -169,7 +194,7 @@ export function useRunSession({
 
     runWatchId.current = Geolocation.watchPosition(
       position => {
-        const {latitude, longitude, speed} = position.coords;
+        const {latitude, longitude, speed, accuracy, heading, altitude} = position.coords;
         const currentPoint = {lat: latitude, lng: longitude};
         const timestamp = position.timestamp || Date.now();
         const gpsPoint = {...currentPoint, timestamp};
@@ -194,12 +219,19 @@ export function useRunSession({
             ...currentPoint,
             timestamp,
             currentSpeed: speedMps,
+            accuracyMeters: typeof accuracy === 'number' ? accuracy : undefined,
+            heading: typeof heading === 'number' ? heading : undefined,
+            altitude: typeof altitude === 'number' ? altitude : undefined,
           },
         )
           .then(response => {
             const data = response.data;
             const completionRate = Number(data.completionRate || 0);
             const nextProgress = completionRate > 1 ? completionRate / 100 : completionRate;
+            const remaining =
+              typeof data.distanceRemainingMeters === 'number'
+                ? data.distanceRemainingMeters
+                : Number.POSITIVE_INFINITY;
 
             if (Number.isFinite(nextProgress)) {
               setRunProgress(prev => {
@@ -211,17 +243,29 @@ export function useRunSession({
               });
             }
 
-            if (!data.onRoute && data.warningMessage) {
-              setVoiceCue(data.warningMessage);
-            } else if (data.warningMessage) {
-              setVoiceCue(data.warningMessage);
-            } else if (data.distanceRemaining > 0) {
-              setVoiceCue(`남은 거리 ${Math.round(data.distanceRemaining)}m입니다.`);
+            if (data.paceFeedback?.currentPaceSecPerKm) {
+              setCurrentPace(Number((data.paceFeedback.currentPaceSecPerKm / 60).toFixed(2)));
+            }
+            if (data.edmControl?.currentBpm) {
+              setCurrentBpm(data.edmControl.currentBpm);
+            }
+
+            const guideMessage =
+              data.voiceCue?.message ||
+              data.warningMessage ||
+              data.currentInstruction?.message ||
+              data.paceFeedback?.message ||
+              data.edmControl?.message;
+
+            if (guideMessage) {
+              setVoiceCue(guideMessage);
+            } else if (Number.isFinite(remaining) && remaining > 0) {
+              setVoiceCue(`남은 거리 ${Math.round(remaining)}m입니다.`);
             } else {
               setVoiceCue('목표 페이스를 유지하고 있습니다.');
             }
 
-            if (nextProgress >= 1 || data.distanceRemaining <= 10) {
+            if (nextProgress >= 1 || remaining <= 10) {
               finishRun();
             }
           })
@@ -256,17 +300,7 @@ export function useRunSession({
     }
 
     try {
-      const currentPosition = await new Promise<Coordinate>((resolve, reject) => {
-        Geolocation.getCurrentPosition(
-          position =>
-            resolve({
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            }),
-          reject,
-          {enableHighAccuracy: true, timeout: 12000, maximumAge: 5000},
-        );
-      });
+      const currentPosition = await getCurrentPoint();
       const routeStart = routeStats.routePoints[0] || startCoord;
       const startDistanceKm = distanceBetweenCoords(currentPosition, routeStart);
 
@@ -278,7 +312,20 @@ export function useRunSession({
         return;
       }
 
-      const response = await startSession(accessToken, routeStats.routeId);
+      const response = await startSession(accessToken, routeStats.routeId, {
+        currentPoint: {...currentPosition, timestamp: Date.now()},
+        targetPaceSecPerKm: Math.round(targetPace * 60),
+        voiceGuideEnabled: true,
+        edmControlEnabled: true,
+      });
+      if (response.data.startAllowed === false) {
+        Alert.alert(
+          '출발 위치 확인 필요',
+          response.data.message ||
+            `루트 시작점에서 약 ${Math.round(response.data.startDistanceMeters || 0)}m 떨어져 있습니다.`,
+        );
+        return;
+      }
       setSessionId(response.data.sessionId);
       setActiveTab('run');
       setRoutePhase('running');
@@ -300,6 +347,7 @@ export function useRunSession({
     }
   }, [
     accessToken,
+    getCurrentPoint,
     postToMap,
     routeStats,
     setActiveTab,
@@ -333,7 +381,10 @@ export function useRunSession({
     }
 
     try {
-      await resumeSession(accessToken, sessionId);
+      const currentPoint = await getCurrentPoint();
+      await resumeSession(accessToken, sessionId, {
+        currentPoint: {...currentPoint, timestamp: Date.now()},
+      });
       await getSession(accessToken, sessionId).catch(() => undefined);
       setRoutePhase('running');
       setVoiceCue('러닝을 재개했습니다. 현재 위치를 다시 확인합니다.');
@@ -341,7 +392,7 @@ export function useRunSession({
       const message = error instanceof Error ? error.message : '세션 재개에 실패했습니다.';
       Alert.alert('재개 실패', message);
     }
-  }, [accessToken, sessionId, setRoutePhase]);
+  }, [accessToken, getCurrentPoint, sessionId, setRoutePhase]);
 
   const handleCancelRun = useCallback(() => {
     const resetToReady = () => {
@@ -364,7 +415,7 @@ export function useRunSession({
         style: 'destructive',
         onPress: async () => {
           try {
-            await cancelSession(accessToken, sessionId);
+            await cancelSession(accessToken, sessionId, {reason: 'USER_CANCELLED'});
           } catch (error) {
             const message = error instanceof Error ? error.message : '세션 취소 API 호출 실패';
             Alert.alert('세션 취소 실패', `${message}\n\n앱에서는 세션을 종료합니다.`);

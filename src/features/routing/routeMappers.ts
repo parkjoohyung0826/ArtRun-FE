@@ -12,15 +12,18 @@ export const routeStatsFromDetail = (
   detail: RouteDetailData,
   shapeLabel: string,
 ): RouteStats => {
-  const routeDistanceKm = (detail.distanceMeters || 0) / 1000;
+  const routeDistanceKm = detail.distanceKm || 0;
+  const checkpoints = (detail.checkpoints || [])
+    .map(checkpoint => checkpoint.point || checkpoint)
+    .filter(point => typeof point.lat === 'number' && typeof point.lng === 'number');
   return {
     routeId: detail.routeId,
     distKm: routeDistanceKm.toFixed(2),
-    duration: formatDuration(null, routeDistanceKm),
+    duration: formatDuration(detail.estimatedTimeSeconds || null, routeDistanceKm),
     matchPct: scoreToPercent(detail.similarityScore),
     shapeLabel,
     routePoints: detail.polyline || [],
-    checkpoints: detail.checkpoints || [],
+    checkpoints,
     pedestrianRoadRatio: detail.pedestrianRoadRatio,
   };
 };
@@ -30,17 +33,12 @@ export const routeStatsFromCandidate = (
   shapeLabel: string,
   fallbackDistanceKm: number,
 ): RouteStats => {
-  const candidateDistance = candidate.distance || 0;
-  const routeDistanceKm = candidateDistance
-    ? candidateDistance > 100
-      ? candidateDistance / 1000
-      : candidateDistance
-    : fallbackDistanceKm;
+  const routeDistanceKm = candidate.distanceKm || fallbackDistanceKm;
 
   return {
     routeId: candidate.routeId,
     distKm: routeDistanceKm.toFixed(2),
-    duration: formatDuration(null, routeDistanceKm),
+    duration: formatDuration(candidate.estimatedTimeSeconds || null, routeDistanceKm),
     matchPct: scoreToPercent(candidate.similarityScore),
     shapeLabel,
     routePoints: candidate.polyline || [],

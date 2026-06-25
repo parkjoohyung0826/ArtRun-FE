@@ -12,24 +12,43 @@ export interface GenerateRouteRequest {
   shapeType: string;
   activityType: string;
   targetDistanceKm: number;
+  targetPaceSecPerKm?: number;
   startPoint: Coordinate;
   preferences: {
     avoidMainRoad: boolean;
     preferPark: boolean;
+    avoidStairs?: boolean;
+    preferWaterfront?: boolean;
+    maxSlopeLevel?: string;
   };
 }
 
 export interface GenerateRouteData {
   taskId: string;
-  message: string;
+  status?: string;
+  estimatedSeconds?: number;
+  message?: string;
+}
+
+export interface PolylinePoint extends Coordinate {
+  order?: number;
+  timestamp?: number;
 }
 
 export interface CandidateRoute {
   routeId: string;
-  distance: number;
+  routeName?: string;
+  shapeType?: string;
+  activityType?: string;
+  distanceKm: number;
+  estimatedTimeSeconds?: number;
+  targetPaceSecPerKm?: number;
   similarityScore: number;
   pedestrianRoadRatio: number;
-  polyline: Coordinate[];
+  expectedBpm?: number;
+  polyline: PolylinePoint[];
+  previewImageUrl?: string;
+  warnings?: string[];
 }
 
 export interface RouteStatusData {
@@ -40,11 +59,21 @@ export interface RouteStatusData {
 
 export interface RouteDetailData {
   routeId: string;
-  distanceMeters: number;
+  routeName?: string;
+  shapeType?: string;
+  activityType?: string;
+  distanceKm: number;
+  estimatedTimeSeconds?: number;
+  targetPaceSecPerKm?: number;
   similarityScore: number;
   pedestrianRoadRatio: number;
-  polyline: Coordinate[];
-  checkpoints: Coordinate[];
+  expectedBpm?: number;
+  startPoint?: Coordinate;
+  endPoint?: Coordinate;
+  polyline: PolylinePoint[];
+  checkpoints: Array<{point?: Coordinate} & Coordinate>;
+  previewImageUrl?: string;
+  createdAt?: string;
 }
 
 async function requestJson<T>(
@@ -107,12 +136,17 @@ export function getRoute(routeId: string, accessToken?: string) {
   );
 }
 
-export function regenerateRoute(routeId: string, accessToken?: string) {
+export function regenerateRoute(
+  routeId: string,
+  accessToken?: string,
+  request?: {reason?: string; preferences?: GenerateRouteRequest['preferences']},
+) {
   return requestJson<ApiResponse<GenerateRouteData>>(
     `/api/v1/routes/${routeId}/regenerate`,
     accessToken,
     {
       method: 'POST',
+      body: JSON.stringify(request || {reason: 'USER_REQUESTED'}),
     },
   );
 }

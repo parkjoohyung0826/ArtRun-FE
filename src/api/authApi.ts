@@ -7,16 +7,18 @@ export interface ApiResponse<T> {
 }
 
 export interface UserResponse {
-  id: string;
+  userId: string;
   email: string;
   nickname: string;
   profileImageUrl?: string;
   provider?: string;
+  createdAt?: string;
 }
 
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
+  isNewUser?: boolean;
   user: UserResponse;
 }
 
@@ -31,7 +33,7 @@ export interface SignupRequest extends LoginRequest {
 
 export interface SocialLoginRequest {
   provider: 'KAKAO' | 'GOOGLE';
-  token: string;
+  providerAccessToken: string;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {

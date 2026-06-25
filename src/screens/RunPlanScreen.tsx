@@ -263,9 +263,12 @@ export function RunPlanScreen({
 
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.secondaryButton, (!routeStats || isGenerating) && styles.buttonDisabled]}
+            style={[
+              styles.secondaryButton,
+              (!routeStats || !mapReady || isGenerating) && styles.buttonDisabled,
+            ]}
             onPress={onRegenerate}
-            disabled={!routeStats || isGenerating}
+            disabled={!routeStats || !mapReady || isGenerating}
             activeOpacity={0.84}>
             <Text style={styles.secondaryButtonText}>재생성</Text>
           </TouchableOpacity>

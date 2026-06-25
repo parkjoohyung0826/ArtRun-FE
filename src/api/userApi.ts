@@ -8,50 +8,92 @@ export interface UpdateUserRequest {
 }
 
 export interface MyPageSummaryResponse {
-  user: UserResponse;
-  totalRuns: number;
+  userId: string;
+  nickname: string;
+  profileImageUrl?: string;
+  totalRunCount: number;
   totalDistanceKm: number;
-  totalTimeSeconds: number;
-  averagePaceMinPerKm: number;
+  sharedRouteCount: number;
+  likedRouteCount: number;
 }
 
 export interface RecordDetailResponse {
   recordId: string;
   routeId?: string;
-  plannedPolyline?: Coordinate[];
-  actualPolyline?: Coordinate[];
-  totalDistanceMeters: number;
-  totalTimeSeconds: number;
-  averageSpeed: number;
+  routeName?: string;
+  shapeType?: string;
+  distanceKm?: number;
+  totalDistanceKm?: number;
+  totalTimeSeconds?: number;
+  averagePace?: string;
+  averagePaceText?: string;
+  averagePaceSecPerKm?: number;
+  averageBpm?: number;
+  averageSpeed?: number;
+  matchRate?: number;
+  shared?: boolean;
+  communityShared?: boolean;
+  routePolyline?: Coordinate[];
+  targetRoutePolyline?: Coordinate[];
+  actualGpsPoints?: Coordinate[];
+  correctedPolyline?: Coordinate[];
   imageUrl?: string;
+  completedAt?: string;
   createdAt?: string;
 }
 
-export interface CommunityRouteResponse {
-  communityRouteId: string;
+export interface RecordSummaryResponse {
+  recordId: string;
+  routeId?: string;
+  routeName?: string;
+  shapeType?: string;
+  distanceKm?: number;
+  averagePace?: string;
+  totalTimeSeconds?: number;
+  matchRate?: number;
+  imageUrl?: string;
+  shared?: boolean;
+  completedAt?: string;
+}
+
+export interface SharedRouteResponse {
+  communityRouteId?: string;
+  recordId?: string;
+  routeId?: string;
   title: string;
   description?: string;
-  author?: UserResponse;
-  routeId?: string;
-  polyline?: Coordinate[];
-  distanceMeters: number;
-  totalTimeSeconds: number;
+  distanceKm?: number;
   imageUrl?: string;
-  likeCount: number;
-  liked: boolean;
+  likeCount?: number;
   createdAt?: string;
 }
 
-export interface PageResponse<T> {
-  totalElements: number;
-  totalPages: number;
-  size: number;
-  content: T[];
-  number: number;
-  numberOfElements: number;
-  first: boolean;
-  last: boolean;
-  empty: boolean;
+export interface LikedRouteResponse {
+  routeId?: string;
+  title: string;
+  shapeType?: string;
+  distanceKm?: number;
+  averagePace?: string;
+  locationName?: string;
+  creatorNickname?: string;
+  thumbnailUrl?: string;
+  likeCount?: number;
+  likedAt?: string;
+}
+
+export interface RecordListResponse {
+  totalCount: number;
+  records: RecordSummaryResponse[];
+}
+
+export interface SharedRouteListResponse {
+  totalCount: number;
+  routes: SharedRouteResponse[];
+}
+
+export interface LikedRouteListResponse {
+  totalCount: number;
+  routes: LikedRouteResponse[];
 }
 
 export interface PageParams {
@@ -109,7 +151,12 @@ export function getMe(accessToken?: string) {
 }
 
 export function updateMe(accessToken: string | undefined, request: UpdateUserRequest) {
-  return requestJson<ApiResponse<UserResponse>>('/api/v1/users/me', accessToken, {
+  return requestJson<ApiResponse<UserResponse | {
+    userId: string;
+    nickname: string;
+    profileImageUrl?: string;
+    updatedAt?: string;
+  }>>('/api/v1/users/me', accessToken, {
     method: 'PATCH',
     body: JSON.stringify(request),
   });
@@ -123,7 +170,7 @@ export function getSummary(accessToken?: string) {
 }
 
 export function getMyRecords(accessToken: string | undefined, params?: PageParams) {
-  return requestJson<ApiResponse<PageResponse<RecordDetailResponse>>>(
+  return requestJson<ApiResponse<RecordListResponse>>(
     `/api/v1/users/me/records?${pageQuery(params)}`,
     accessToken,
   );
@@ -143,14 +190,14 @@ export function deleteMyRecord(accessToken: string | undefined, recordId: string
 }
 
 export function getMySharedRoutes(accessToken: string | undefined, params?: PageParams) {
-  return requestJson<ApiResponse<PageResponse<CommunityRouteResponse>>>(
+  return requestJson<ApiResponse<SharedRouteListResponse>>(
     `/api/v1/users/me/shared-routes?${pageQuery(params)}`,
     accessToken,
   );
 }
 
 export function getLikedRoutes(accessToken: string | undefined, params?: PageParams) {
-  return requestJson<ApiResponse<PageResponse<CommunityRouteResponse>>>(
+  return requestJson<ApiResponse<LikedRouteListResponse>>(
     `/api/v1/users/me/liked-routes?${pageQuery(params)}`,
     accessToken,
   );

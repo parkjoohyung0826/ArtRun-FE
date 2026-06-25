@@ -5,6 +5,9 @@ import {ROUTE_STATUS_DONE, ROUTE_STATUS_FAILED, ROUTE_STATUS_LABELS} from './rou
 import {routeStatsFromCandidate, routeStatsFromDetail} from './routeMappers';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(() => resolve(), ms));
+const ROUTE_TASK_MAX_ATTEMPTS = 120;
+const ROUTE_TASK_INITIAL_DELAY_MS = 700;
+const ROUTE_TASK_POLL_INTERVAL_MS = 1500;
 
 interface WaitForRouteTaskParams {
   accessToken?: string;
@@ -23,8 +26,10 @@ export async function waitForRouteTask({
   taskId,
   onStatus,
 }: WaitForRouteTaskParams): Promise<RouteStats> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await sleep(attempt === 0 ? 700 : 1500);
+  for (let attempt = 0; attempt < ROUTE_TASK_MAX_ATTEMPTS; attempt += 1) {
+    await sleep(
+      attempt === 0 ? ROUTE_TASK_INITIAL_DELAY_MS : ROUTE_TASK_POLL_INTERVAL_MS,
+    );
     const statusResponse = await getRouteStatus(taskId, accessToken);
     const status = statusResponse.data.status?.toUpperCase?.() || '';
     const statusMessage =

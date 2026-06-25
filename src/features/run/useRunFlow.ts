@@ -13,7 +13,7 @@ import {
   registerCommunityRoute,
   unlikeCommunityRoute,
 } from '../../api/communityApi';
-import {generateRoute, regenerateRoute} from '../../api/routeApi';
+import {generateRoute, getRoute, regenerateRoute} from '../../api/routeApi';
 import {COMMUNITY_RUNS} from '../../constants/appData';
 import {SHAPES} from '../../shapes';
 import type {
@@ -93,6 +93,32 @@ export function useRunFlow({
     setRouteStats(null);
     setRoutePhase('idle');
   }, []);
+
+  const hydrateCommunityRoutePoints = useCallback(
+    async (run: SavedRun) => {
+      if (run.routePoints?.length || !run.routeId) return run;
+
+      try {
+        const response = await getRoute(run.routeId, accessToken);
+        const detail = response.data;
+        const routePoints = detail.polyline || [];
+        const score = Number(detail.similarityScore);
+
+        return {
+          ...run,
+          distance: detail.distanceKm ? `${detail.distanceKm.toFixed(1)} km` : run.distance,
+          matchPct: Number.isFinite(score)
+            ? Math.round(score <= 1 ? score * 100 : score)
+            : run.matchPct,
+          startCoord: detail.startPoint || routePoints[0] || run.startCoord,
+          routePoints,
+        };
+      } catch {
+        return run;
+      }
+    },
+    [accessToken],
+  );
 
   const {
     currentBpm,
@@ -175,9 +201,9 @@ export function useRunFlow({
       const response = await getCommunityRoutes(accessToken, {
         page: 0,
         size: 50,
-        sort: ['createdAt,desc'],
+        sort: ['RECENT_DESC'],
       });
-      setServerCommunityRuns(response.data.content.map(route => communityRouteToSavedRun(route)));
+      setServerCommunityRuns(response.data.routes.map(route => communityRouteToSavedRun(route)));
     } catch (error) {
       const message = error instanceof Error ? error.message : '커뮤니티 루트 조회에 실패했습니다.';
       setCommunityError(message);
@@ -328,7 +354,15 @@ export function useRunFlow({
   }, [resetRouteDraft, resetSession, setActiveTab, setRunProgress, setVoiceCue]);
 
   const handleRegenerate = useCallback(async () => {
-    if (!routeStats?.routeId || isGenerating) {
+    if (isGenerating) return;
+
+    if (!mapReady) {
+      Alert.alert('지도 준비 중', '지도가 준비된 뒤 루트를 재생성할 수 있습니다.');
+      return;
+    }
+
+    if (!routeStats?.routeId) {
+      setVoiceCue('서버 루트 ID가 없어 현재 조건으로 새 경로를 생성합니다.');
       handleGenerate();
       return;
     }
@@ -337,10 +371,20 @@ export function useRunFlow({
     setRoutePhase('idle');
     setRunProgress(0);
     resetSession();
+    postToMap({type: 'CLEAR'});
     setVoiceCue('기존 조건을 유지한 채 다른 도로 조합을 찾습니다.');
 
     try {
-      const response = await regenerateRoute(routeStats.routeId, accessToken);
+      const response = await regenerateRoute(routeStats.routeId, accessToken, {
+        reason: 'USER_REQUESTED',
+        preferences: {
+          avoidMainRoad: preferences.avoidMainRoad,
+          preferPark: preferences.preferPark,
+        },
+      });
+      if (!response.data.taskId) {
+        throw new Error('루트 재생성 작업 ID를 받지 못했습니다.');
+      }
       setVoiceCue(response.data.message || '루트 재생성 작업이 시작되었습니다.');
       await applyRouteTaskResult(
         response.data.taskId,
@@ -362,10 +406,14 @@ export function useRunFlow({
     distance,
     handleGenerate,
     isGenerating,
+    mapReady,
+    postToMap,
     resetSession,
     routeStats,
     setRunProgress,
     setVoiceCue,
+    preferences.avoidMainRoad,
+    preferences.preferPark,
   ]);
 
   const handleNewRun = useCallback(() => {
@@ -388,18 +436,46 @@ export function useRunFlow({
   const handleSelectCommunityId = useCallback(
     async (id: string | null) => {
       setSelectedCommunityId(id);
-      if (!id || !serverCommunityRuns.some(run => run.id === id)) return;
+      if (!id) return;
+
+      const selectedRun = communityRuns.find(run => run.id === id);
+      const communityRouteId = selectedRun?.communityRouteId || id;
+      if (!communityRouteId) return;
 
       try {
-        const response = await getCommunityRoute(id, accessToken);
-        const nextRun = communityRouteToSavedRun(response.data);
-        setServerCommunityRuns(prev => prev.map(run => (run.id === id ? nextRun : run)));
+        const response = await getCommunityRoute(communityRouteId, accessToken);
+        const nextRun = await hydrateCommunityRoutePoints(communityRouteToSavedRun(response.data));
+
+        setServerCommunityRuns(prev => {
+          const withoutCurrent = prev.filter(
+            run => run.id !== id && run.communityRouteId !== communityRouteId,
+          );
+          return [nextRun, ...withoutCurrent];
+        });
+        setSavedRuns(prev =>
+          prev.map(run =>
+            run.id === id || run.communityRouteId === communityRouteId
+              ? {
+                  ...run,
+                  routeId: nextRun.routeId || run.routeId,
+                  startCoord: nextRun.startCoord || run.startCoord,
+                  routePoints: nextRun.routePoints || run.routePoints,
+                }
+              : run,
+          ),
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : '커뮤니티 루트 상세 조회에 실패했습니다.';
         setCommunityError(message);
       }
     },
-    [accessToken, serverCommunityRuns, setSelectedCommunityId],
+    [
+      accessToken,
+      communityRuns,
+      hydrateCommunityRoutePoints,
+      setSavedRuns,
+      setSelectedCommunityId,
+    ],
   );
 
   const registerSavedRunToCommunity = useCallback(
@@ -418,7 +494,20 @@ export function useRunFlow({
           run.description ||
           `${run.shape} 모양으로 완주한 ${run.distance} 러닝 아트 루트입니다.`,
       });
-      const serverRun = communityRouteToSavedRun(response.data);
+      const communityRouteId = response.data.communityRouteId;
+      const detailResponse = communityRouteId
+        ? await getCommunityRoute(communityRouteId, accessToken)
+        : null;
+      const serverRun = detailResponse
+        ? await hydrateCommunityRoutePoints(communityRouteToSavedRun(detailResponse.data))
+        : {
+            ...run,
+            id: communityRouteId || run.id,
+            communityRouteId,
+            routeId: response.data.routeId || run.routeId,
+            shared: true,
+            likes: 0,
+          };
 
       setServerCommunityRuns(prev => {
         const withoutDuplicate = prev.filter(item => item.id !== serverRun.id);
@@ -439,7 +528,7 @@ export function useRunFlow({
       );
       return serverRun;
     },
-    [accessToken, setSavedRuns],
+    [accessToken, hydrateCommunityRoutePoints, setSavedRuns],
   );
 
   const toggleShare = useCallback(
@@ -528,9 +617,23 @@ export function useRunFlow({
 
       try {
         if (nextLiked) {
-          await likeCommunityRoute(accessToken, targetRun.communityRouteId);
+          const response = await likeCommunityRoute(accessToken, targetRun.communityRouteId);
+          setServerCommunityRuns(prev =>
+            prev.map(run =>
+              run.id === id
+                ? {...run, liked: response.data.liked, likes: response.data.likeCount}
+                : run,
+            ),
+          );
         } else {
-          await unlikeCommunityRoute(accessToken, targetRun.communityRouteId);
+          const response = await unlikeCommunityRoute(accessToken, targetRun.communityRouteId);
+          setServerCommunityRuns(prev =>
+            prev.map(run =>
+              run.id === id
+                ? {...run, liked: response.data.liked, likes: response.data.likeCount}
+                : run,
+            ),
+          );
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : '좋아요 API 호출에 실패했습니다.';
@@ -581,12 +684,15 @@ export function useRunFlow({
       if (run.communityRouteId) {
         try {
           const response = await prepareCommunityRun(accessToken, run.communityRouteId, {
-            lat: routeStart.lat,
-            lng: routeStart.lng,
+            currentPoint: {
+              lat: routeStart.lat,
+              lng: routeStart.lng,
+              timestamp: Date.now(),
+            },
           });
-          const distanceToStart = response.data.distanceToStart || 0;
+          const distanceToStart = response.data.startDistanceMeters || 0;
 
-          if (!response.data.canRun) {
+          if (!response.data.runnable) {
             Alert.alert(
               '출발 위치 확인 필요',
               `루트 시작점에서 약 ${distanceToStart.toFixed(0)}m 떨어져 있습니다. 시작점 근처에서 다시 시도해 주세요.`,

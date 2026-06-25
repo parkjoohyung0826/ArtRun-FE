@@ -6,19 +6,42 @@ import type {RecordDetailResponse} from './userApi';
 export interface SaveRecordRequest {
   sessionId: string;
   routeId?: string;
-  gpsPoints: Array<Coordinate & {timestamp: number}>;
+  gpsPoints: Array<Coordinate & {timestamp?: number; accuracyMeters?: number; speed?: number}>;
   totalTimeSeconds: number;
+  averagePaceSecPerKm?: number;
+  averageBpm?: number;
+  calories?: number;
 }
 
 export interface RecordResponse {
   recordId: string;
+  sessionId?: string;
+  routeId?: string;
+  routeName?: string;
+  shapeType?: string;
   totalDistanceMeters: number;
+  totalDistanceKm?: number;
   totalTimeSeconds: number;
+  averagePaceSecPerKm?: number;
+  averagePaceText?: string;
   averageSpeed: number;
+  averageBpm?: number;
+  calories?: number;
+  matchRate?: number;
+  completionRate?: number;
+  correctedPolyline?: Array<Coordinate & {order?: number; timestamp?: number}>;
   imageUrl?: string;
+  createdAt?: string;
 }
 
-export type ShareCardResponse = Record<string, string>;
+export interface ShareCardResponse {
+  recordId?: string;
+  imageUrl?: string;
+  shareCardUrl?: string;
+  url?: string;
+  cardUrl?: string;
+  generatedAt?: string;
+}
 
 async function requestJson<T>(
   path: string,
@@ -84,6 +107,9 @@ export function regenerateShareCard(accessToken: string | undefined, recordId: s
   return requestJson<ApiResponse<ShareCardResponse>>(
     `/api/v1/records/${recordId}/share-card`,
     accessToken,
-    {method: 'POST'},
+    {
+      method: 'POST',
+      body: JSON.stringify({theme: 'DARK', includeMap: true, includeStats: true}),
+    },
   );
 }
